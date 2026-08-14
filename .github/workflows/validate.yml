@@ -61,7 +61,15 @@ jobs:
 
       # An independent check that does not go through buf at all: if protoc
       # itself cannot compile the schema, nothing downstream can.
+      #
+      # `if: always()` because Actions skips later steps once one fails, so
+      # without it a `buf breaking` failure MASKS whether protoc would also have
+      # failed — you fix the breaking change, push again, and only then discover
+      # the second problem. Observed for real: the ci-verify-breaking run showed
+      # `5. failure buf breaking` / `6. skipped protoc cross-check`. The whole
+      # point of a cross-check is that it is independent, so it must still run.
       - name: protoc cross-check
+        if: always()
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq protobuf-compiler
