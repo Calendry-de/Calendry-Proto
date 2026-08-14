@@ -1,0 +1,118 @@
+name: publish
+
+# Publishing is effectively irreversible — GitHub Packages refuses to republish
+# a version — so this runs only on an explicit semver tag, never per-commit. A
+# per-commit publish would burn version numbers permanently and make
+# in-progress schema installable.
+#
+# workflow_dispatch exists for re-running a publish that failed for
+# infrastructure reasons, and for inspecting the tarball before burning a
+# version: dry_run defaults to TRUE.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Pack and print the tarball contents without publishing'
+        type: boolean
+        default: true
+      version:
+        description: 'Version to publish (required only when dispatching from a branch, e.g. 0.2.0)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  # `needs:` cannot cross workflow files, so the validation is pulled in as a
+  # reusable workflow rather than duplicated.
+  validate:
+    uses: ./.github/workflows/validate.yml
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    defaults:
+      run:
+        working-directory: packages/ts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag is the single source of truth for the version. package.json
+      # carries a 0.0.0-dev placeholder precisely so there is no second place to
+      # forget to update.
+      - name: Resolve version and mode
+        id: resolve
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/}" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            echo "::error::dispatched from a branch with no 'version' input — there is no tag to derive a version from. Re-run against a tag, or supply version."
+            exit 1
+          fi
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$VERSION' is not a semver version"
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            DRY="${{ inputs.dry_run }}"
+          else
+            DRY=false
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY"     >> "$GITHUB_OUTPUT"
+          echo "::notice::version=$VERSION dry_run=$DRY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@mindcollaps'
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+          protoc --version
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Generate TypeScript bindings
+        run: npm run generate
+
+      - name: Build
+        run: npm run build
+
+      - name: Set version from tag
+        run: npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Show tarball contents
+        run: npm pack --dry-run
+
+      - name: Publish to GitHub Packages
+        if: steps.resolve.outputs.dry_run != 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dry run — nothing published
+        if: steps.resolve.outputs.dry_run == 'true'
+        run: |
+          echo "::notice::dry_run was true — the tarball above was built but NOT published."
+          echo "Re-dispatch with dry_run=false, or push the tag, to publish for real."

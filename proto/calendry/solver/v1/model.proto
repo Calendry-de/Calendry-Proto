@@ -109,12 +109,16 @@ message Week {
   WeekKind kind = 3;
 }
 
+// Enum values carry the enum-name prefix because protobuf scopes them to the
+// enclosing PACKAGE, not to the enum. Unprefixed `EXAM` / `BREAK` would occupy
+// `calendry.solver.v1` directly and collide with any future enum wanting the
+// same word — a protoc error, not a warning.
 enum WeekKind {
   WEEK_KIND_UNSPECIFIED = 0;
-  TEACHING = 1;
-  EXAM     = 2;
-  BREAK    = 3;
-  HOLIDAY  = 4;
+  WEEK_KIND_TEACHING    = 1;
+  WEEK_KIND_EXAM        = 2;
+  WEEK_KIND_BREAK       = 3;
+  WEEK_KIND_HOLIDAY     = 4;
 }
 
 message Holiday {

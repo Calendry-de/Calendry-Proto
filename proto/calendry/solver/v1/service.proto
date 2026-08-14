@@ -93,11 +93,11 @@ message GetStatusResponse {
 // deliberately not encoded here.
 enum RunStatus {
   RUN_STATUS_UNSPECIFIED = 0;
-  QUEUED    = 1;
-  RUNNING   = 2;
-  SUCCEEDED = 3;
-  CANCELLED = 4;
-  FAILED    = 5;
+  RUN_STATUS_QUEUED      = 1;
+  RUN_STATUS_RUNNING     = 2;
+  RUN_STATUS_SUCCEEDED   = 3;
+  RUN_STATUS_CANCELLED   = 4;
+  RUN_STATUS_FAILED      = 5;
 }
 
 // ---------------------------------------------------------------------------

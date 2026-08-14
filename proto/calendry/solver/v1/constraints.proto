@@ -118,8 +118,8 @@ message MaxOnlineShare {
 
 enum ShareWindow {
   SHARE_WINDOW_UNSPECIFIED = 0;
-  PER_TERM = 1;
-  PER_WEEK = 2;
+  SHARE_WINDOW_PER_TERM    = 1;
+  SHARE_WINDOW_PER_WEEK    = 2;
 }
 
 // ---------------------------------------------------------------------------

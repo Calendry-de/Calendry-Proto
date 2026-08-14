@@ -1,0 +1,72 @@
+name: validate
+
+# Runs on every branch push and on PRs into main. Tag pushes are excluded here
+# (`branches: ['**']` matches branches only) because publish.yml calls this
+# workflow itself, so a tag would otherwise validate twice.
+#
+# Also exposed as a reusable workflow so publish.yml can gate on it — `needs:`
+# cannot reference a job in a different workflow file.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  BUF_VERSION: 1.58.0
+  REPO_URL: https://github.com/MindCollaps/calendry-proto.git
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so buf can resolve the comparison ref.
+          fetch-depth: 0
+
+      - name: Install buf
+        run: |
+          curl -sSL -o /tmp/buf \
+            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64"
+          chmod +x /tmp/buf
+          sudo mv /tmp/buf /usr/local/bin/buf
+          buf --version
+
+      - name: buf lint
+        run: buf lint
+
+      # Compares the current schema against main.
+      #
+      # Deliberately skipped when the ref IS main: at that point origin/main has
+      # already advanced to this commit, so the comparison degenerates into
+      # comparing the schema with itself and passes trivially. Reporting that as
+      # a meaningful green would be misleading. The gate that matters runs on
+      # branches and PRs, which is where changes are supposed to arrive from.
+      #
+      # `subdir=proto` pins the module root on the comparison side too, so the
+      # check still works against refs that predate this buf.yaml.
+      - name: buf breaking (against main)
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "::notice::on main — breaking check skipped (would compare main against itself)"
+            exit 0
+          fi
+          echo "comparing against ${REPO_URL}#branch=main,subdir=proto"
+          buf breaking --against "${REPO_URL}#branch=main,subdir=proto"
+
+      # An independent check that does not go through buf at all: if protoc
+      # itself cannot compile the schema, nothing downstream can.
+      - name: protoc cross-check
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+          protoc --version
+          protoc --proto_path=proto \
+            --descriptor_set_out=/dev/null \
+            proto/calendry/solver/v1/*.proto
+          echo "protoc compiled the schema cleanly"

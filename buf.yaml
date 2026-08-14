@@ -1,0 +1,44 @@
+# Calendry protobuf contract — lint and breaking-change policy.
+#
+# This schema has two independent code generators consuming it (prost for the
+# Rust solver, ts-proto for the Nuxt app), so a change that is merely
+# source-breaking still costs real work downstream. The rules below are chosen
+# with that in mind rather than taken as defaults.
+
+version: v2
+
+modules:
+  - path: proto
+
+lint:
+  use:
+    # Everything in STANDARD. Notably includes ENUM_VALUE_PREFIX, which is not
+    # cosmetic: protobuf scopes enum VALUES to the enclosing package, not to
+    # their enum, so an unprefixed `EXAM` occupies `calendry.solver.v1`
+    # directly and collides with any future enum wanting that word. protoc
+    # treats that as an error, not a warning.
+    - STANDARD
+
+    # Bans streaming RPCs. The architecture is unary-only — the solver owns run
+    # state and the caller polls GetStatus, deliberately holding no streams
+    # open. This turns that decision into a mechanical check so a future
+    # `stream` fails CI instead of quietly breaking the polling model.
+    - UNARY_RPC
+
+  # Deliberately NOT enabled:
+  #
+  #   COMMENTS — would require a comment on every message, field and enum
+  #   value. These files are already densely commented with rationale, but
+  #   mandatory comments on self-evident fields (`string id = 1`) produce
+  #   filler that decays into noise and eventually lies.
+  #
+  # `buf format` is likewise not enforced in CI: it collapses the hand-aligned
+  # field and comment columns these files use, which is ~130 lines of churn
+  # for no correctness benefit.
+
+breaking:
+  use:
+    # Strictest practical category: catches field renumbering, type changes and
+    # deletions, AND source-compatibility breaks. WIRE / WIRE_JSON only protect
+    # the encoding, which is not enough when both consumers generate code.
+    - FILE
