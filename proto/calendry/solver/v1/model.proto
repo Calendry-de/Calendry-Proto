@@ -1,0 +1,375 @@
+// Calendry solver — problem snapshot.
+//
+// The solver never touches Postgres. The Nuxt app assembles a SolverInput
+// snapshot and sends it over gRPC; the solver is stateless and
+// input/output-only.
+//
+// Two-level scheduling model:
+//   Offering = the DEMAND definition ("this needs to happen N times, needs a
+//              Lecturer with role X, a Group, a Room with equipment Y, kind Z").
+//              This is the solver's input.
+//   Session  = one atomic PLACED instance (week/slot/room/lecturer/group).
+//              This is the solver's output.
+
+syntax = "proto3";
+
+package calendry.solver.v1;
+
+import "calendry/solver/v1/constraints.proto";
+
+// ---------------------------------------------------------------------------
+// Root snapshot
+// ---------------------------------------------------------------------------
+
+message SolverInput {
+  string requesting_tenant_id = 1;
+
+  // Empty if the tenant belongs to no Federation.
+  string federation_id = 2;
+
+  TimeGrid         time_grid = 3;
+  AcademicCalendar calendar  = 4;
+
+  repeated Room     rooms     = 5;
+  repeated Person   persons   = 6;
+  repeated Group    groups    = 7;
+  repeated Offering offerings = 8;
+
+  // Already-placed Sessions. Includes Sessions the solver may move (in scope),
+  // must not move (locked / past / out of scope), and Federation-owned Sessions
+  // that act purely as occupancy.
+  repeated Session existing_sessions = 9;
+
+  // Occupancy of Federation-shared Rooms by OTHER tenants.
+  repeated ExternalOccupancy external_occupancy = 10;
+
+  repeated ConstraintConfig constraints = 11;
+
+  // The caller-supplied "now". Sessions starting strictly before this slot are
+  // excluded from recalculation entirely — a correctness rule, not a preference.
+  //
+  // Supplied by the caller rather than read from the server clock so that a run
+  // is deterministic and replayable: re-running the same snapshot tomorrow must
+  // produce the same answer.
+  SlotRef reference_slot = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Time
+// ---------------------------------------------------------------------------
+
+// Per-tenant configured grid. There is NO global fixed grid: any arithmetic
+// like "slot % 3 = the day" or "slot > 14 means Saturday" is forbidden and must
+// resolve against this message instead.
+message TimeGrid {
+  uint32 blocks_per_day       = 1;
+  uint32 block_length_minutes = 2;
+
+  // Minutes from midnight, institution-local.
+  uint32 day_start_minute = 3;
+
+  // ISO weekday, 1 = Monday .. 7 = Sunday.
+  repeated uint32 active_days = 4;
+
+  // IANA zone of the institution. Informational only — all solving happens in
+  // single institution-local time. Per-Person timezone is a presentation/export
+  // concern and must never reach "same day" / "adjacent slot" logic.
+  string institution_timezone = 5;
+}
+
+// Addresses one block of the grid. Deliberately a struct rather than a flat
+// integer: a bare index silently misinterprets against a different grid, and
+// this service must never assume a grid shape.
+message SlotRef {
+  // Index into AcademicCalendar.weeks.
+  uint32 week = 1;
+
+  // ISO weekday, 1 = Monday .. 7 = Sunday.
+  uint32 day = 2;
+
+  // 0-based within the day.
+  uint32 block = 3;
+}
+
+message AcademicCalendar {
+  string term_id = 1;
+
+  repeated Week weeks = 2;
+
+  // Single days that are holidays inside otherwise-teaching weeks.
+  repeated Holiday holidays = 3;
+}
+
+message Week {
+  uint32 index = 1;
+
+  // ISO-8601 date (YYYY-MM-DD) of that week's Monday.
+  string start_date = 2;
+
+  WeekKind kind = 3;
+}
+
+enum WeekKind {
+  WEEK_KIND_UNSPECIFIED = 0;
+  TEACHING = 1;
+  EXAM     = 2;
+  BREAK    = 3;
+  HOLIDAY  = 4;
+}
+
+message Holiday {
+  // ISO-8601 date (YYYY-MM-DD).
+  string date  = 1;
+  string label = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Space
+// ---------------------------------------------------------------------------
+
+message Room {
+  string id = 1;
+
+  // Mirrors the DB invariant: tenant_id / federation_id both nullable,
+  // exactly one set. The oneof makes the alternative unrepresentable.
+  oneof owner {
+    string tenant_id     = 2;
+    string federation_id = 3;
+  }
+
+  string name     = 4;
+  uint32 capacity = 5;
+
+  // Desirability. HIGHER = more premium / scarce. MinimizeRoomRank penalizes
+  // rooms at or above its threshold.
+  uint32 rank = 6;
+
+  // Online delivery is modeled as a virtual Room rather than a boolean flag on
+  // the Session, so room-assignment logic stays uniform.
+  bool is_virtual = 7;
+
+  // Tenant-defined equipment/feature vocabulary.
+  repeated string feature_tags = 8;
+
+  string location = 9;
+}
+
+// ---------------------------------------------------------------------------
+// People & grouping
+// ---------------------------------------------------------------------------
+
+message Person {
+  string id = 1;
+
+  // Tenant-defined vocabulary. "lecturer" is the one fixed, universal role.
+  repeated string role_tags = 2;
+
+  repeated string group_ids = 3;
+
+  repeated Unavailability blackouts = 4;
+}
+
+// A blackout window. Empty repeated field = "all values on that axis", so
+// {days:[5]} means every Friday and {blocks:[0]} means every first block.
+message Unavailability {
+  repeated uint32 days   = 1;  // ISO weekday
+  repeated uint32 blocks = 2;  // 0-based within day
+  repeated uint32 weeks  = 3;  // index into calendar weeks
+
+  string reason = 4;
+}
+
+// Nested. The ancestor/descendant closure is NOT transmitted — the solver
+// derives it from parent_id. Shipping the app's closure table would create a
+// second source of truth that can drift with no way for the solver to detect it.
+message Group {
+  string id        = 1;
+  string parent_id = 2;  // empty = root
+  string name      = 3;
+  uint32 size      = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------
+
+message Offering {
+  string id = 1;
+
+  oneof owner {
+    string tenant_id     = 2;
+    string federation_id = 3;
+  }
+
+  // Tenant-defined vocabulary, replacing any fixed Lecture/Exam/Event split.
+  string kind = 4;
+
+  // The "N times" — how many Sessions must realize this Offering.
+  uint32 required_session_count = 5;
+
+  uint32 duration_blocks = 6;
+
+  // One shape covering two cases: when candidate_lecturer_ids.len() ==
+  // required_lecturer_count the assignment is fixed; otherwise the solver is
+  // choosing from a pool.
+  repeated string candidate_lecturer_ids = 7;
+  uint32          required_lecturer_count = 8;
+
+  repeated string group_ids = 9;
+
+  // Directly-assigned individuals, independent of Group membership.
+  repeated string participant_person_ids = 10;
+
+  repeated string required_room_features = 11;
+  uint32          min_capacity           = 12;
+
+  // Empty = any eligible Room.
+  repeated string allowed_room_ids = 13;
+
+  bool allow_online = 14;
+}
+
+message Session {
+  string id = 1;
+
+  oneof owner {
+    string tenant_id     = 2;
+    string federation_id = 3;
+  }
+
+  // May be empty: ad-hoc Sessions (e.g. a "staff_meeting" kind) need not
+  // realize any Offering.
+  string offering_id = 4;
+
+  string kind = 5;
+
+  SlotRef start_slot     = 6;
+  uint32  duration_blocks = 7;
+
+  string          room_id      = 8;
+  repeated string lecturer_ids = 9;
+  repeated string group_ids    = 10;
+  repeated string person_ids   = 11;
+
+  // An explicit user lock. ABSOLUTE: never relaxed, not even by the deferred v2
+  // minimize-movement policy.
+  //
+  // Distinct from being out of scope, which is merely expensive to violate.
+  // Scope membership is NOT stored here — it comes from SolveScope.
+  bool is_locked = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Scope
+// ---------------------------------------------------------------------------
+
+// One solve mechanism, not multiple modes: a request names what is being
+// actively placed, plus a policy for everything outside that.
+message SolveScope {
+  // Union of the two. Empty scope entirely = nothing to place.
+  repeated string offering_ids = 1;
+  repeated string group_ids    = 2;
+
+  LockPolicy outside_scope_policy = 3;
+}
+
+enum LockPolicy {
+  LOCK_POLICY_UNSPECIFIED = 0;
+
+  // v1: everything outside scope is hard-locked and never moved.
+  LOCK_POLICY_HARD = 1;
+
+  // v2, deferred: a soft minimize-movement penalty replaces the hard lock, so
+  // the solver MAY disturb out-of-scope Sessions when genuinely necessary but
+  // is heavily biased against it. Rejected with UNIMPLEMENTED by v1.
+  LOCK_POLICY_MINIMIZE_MOVEMENT = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Federation-shared occupancy — OPEN DEPENDENCY
+//
+// How the app obtains this (cross-tenant occupancy ledger vs. a narrow database
+// function) is undecided. This message is deliberately shaped to make no
+// commitment either way: it carries only what the solver needs to avoid
+// double-booking a shared Room across a tenant boundary.
+// ---------------------------------------------------------------------------
+
+message ExternalOccupancy {
+  // Must reference a Federation-owned Room.
+  string room_id = 1;
+
+  SlotRef start_slot     = 2;
+  uint32  duration_blocks = 3;
+
+  // Opaque; diagnostics only. The solver never interprets this.
+  string source_ref = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+
+message SolverOutput {
+  // The full resulting placement for in-scope Sessions.
+  repeated PlacedSession sessions = 1;
+
+  // Hard-constraint violations surviving in the returned solution.
+  //
+  // The solver accepts possibly-infeasible input (the app's manual-edit UX is
+  // "warn and allow") and degrades gracefully rather than rejecting it. How a
+  // completed run whose output still contains violations should be CLASSIFIED
+  // is a separate open question — deliberately not encoded here, so no
+  // classification gets baked in by accident.
+  repeated ConstraintViolation hard_violations = 2;
+
+  ObjectiveBreakdown objective = 3;
+  SolveStats         stats     = 4;
+}
+
+message PlacedSession {
+  // Empty = newly created by this run.
+  string session_id  = 1;
+  string offering_id = 2;
+
+  SlotRef start_slot     = 3;
+  uint32  duration_blocks = 4;
+
+  string          room_id      = 5;
+  repeated string lecturer_ids = 6;
+  repeated string group_ids    = 7;
+  repeated string person_ids   = 8;
+}
+
+message ConstraintViolation {
+  string constraint_id   = 1;
+  string constraint_type = 2;
+
+  repeated string session_ids  = 3;
+  repeated string offering_ids = 4;
+
+  // Human-readable; diagnostics only, never parsed.
+  string detail = 5;
+}
+
+message ObjectiveBreakdown {
+  double total = 1;
+
+  repeated ComponentScore components = 2;
+}
+
+message ComponentScore {
+  string constraint_id   = 1;
+  string constraint_type = 2;
+
+  uint64 raw_count = 3;
+  double weighted  = 4;
+}
+
+message SolveStats {
+  uint64 moves_evaluated = 1;
+  uint64 moves_accepted  = 2;
+  uint64 elapsed_millis  = 3;
+
+  // e.g. "time_budget", "move_budget", "converged", "cancelled".
+  string termination_reason = 4;
+}

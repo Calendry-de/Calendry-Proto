@@ -1,0 +1,164 @@
+// Calendry solver — constraint catalogue.
+//
+// 14 predefined constraint types. Each type gets exactly ONE typed, compiled
+// evaluator function in the solver, reading that type's typed parameters.
+// There is no interpreter and no free-form expression language: tenant-supplied
+// logic never executes. A tenant configures a constraint by choosing a
+// predefined type and filling in its typed parameters.
+//
+// Hard-vs-soft is a property of the TYPE, not of the config — it is compiled
+// into the evaluator and cannot be flipped per tenant.
+
+syntax = "proto3";
+
+package calendry.solver.v1;
+
+// ---------------------------------------------------------------------------
+// Wrapper
+// ---------------------------------------------------------------------------
+
+message ConstraintConfig {
+  string id = 1;
+
+  bool enabled = 2;
+
+  // Which tenant-defined Offering/Session `kind`s this instance applies to.
+  // Empty = all kinds. Required because a tenant-defined kind (e.g.
+  // "staff_meeting") may have no Group at all, so group-based constraints
+  // cannot be assumed universal.
+  repeated string applies_to_kinds = 3;
+
+  // Penalty weight. Meaningful for SOFT types only; ignored for HARD types.
+  double weight = 4;
+
+  oneof params {
+    // -- Structural (double-booking) --
+    RoomDoubleBooking     room_double_booking     = 10;
+    LecturerDoubleBooking lecturer_double_booking = 11;
+    GroupDoubleBooking    group_double_booking    = 12;
+
+    // -- Hard --
+    ExactFrequency      exact_frequency        = 13;
+    LecturerVeto        lecturer_veto          = 14;
+    OnlineOnsiteSameDay online_onsite_same_day = 15;
+    MaxOnlineShare      max_online_share       = 16;
+
+    // Structural, added after the initial band assignment — numbered out of
+    // band deliberately rather than renumbering already-approved fields.
+    PersonDoubleBooking person_double_booking = 17;
+
+    // -- Soft --
+    MinimizeFirstBlock minimize_first_block = 20;
+    MinimizeLastBlock  minimize_last_block  = 21;
+    MinimizeDayUsage   minimize_day_usage   = 22;
+    MinimizeRoomRank   minimize_room_rank   = 23;
+    MinimizeExamWeek   minimize_exam_week   = 24;
+    MinimizeOnline     minimize_online      = 25;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Structural types (double-booking)
+//
+// The first three are already evaluated by the Nuxt app's manual-edit checker
+// today. PersonDoubleBooking is NOT yet — see the cross-repo follow-up note in
+// the solver repo's CLAUDE.md.
+// ---------------------------------------------------------------------------
+
+// HARD. A Room may host at most one Session per (week, day, block).
+// Federation-owned Rooms additionally consider ExternalOccupancy supplied by
+// the caller, so a shared resource is not double-booked across tenants.
+message RoomDoubleBooking {}
+
+// HARD. A Person assigned as Lecturer may lead at most one Session per slot.
+message LecturerDoubleBooking {}
+
+// HARD. A Group may attend at most one Session per slot. Conflicts propagate
+// through the nested-group tree in BOTH directions: a Group is busy if itself,
+// any ancestor, or any descendant is busy at that slot.
+message GroupDoubleBooking {}
+
+// HARD. A Person may attend at most one Session per slot, considering both
+// direct individual assignment and Group membership.
+//
+// This catches a clash the Group check structurally cannot: a Person who is a
+// member of two Groups that are UNRELATED in the nesting tree (neither is an
+// ancestor or descendant of the other), both scheduled at the same slot.
+message PersonDoubleBooking {}
+
+// ---------------------------------------------------------------------------
+// Hard types
+// ---------------------------------------------------------------------------
+
+// HARD. Each in-scope Offering must be realized by exactly
+// `Offering.required_session_count` placed Sessions.
+// No parameters — the count is Offering data, not constraint policy.
+message ExactFrequency {}
+
+// HARD. A Person is never assigned as Lecturer during one of their declared
+// blackout windows.
+//
+// No parameters: the blackout VALUES live on `Person.blackouts` because they
+// are per-person data, whereas this config is tenant-level policy. Enabling
+// this constraint switches enforcement on.
+message LecturerVeto {}
+
+// HARD. For a given Group and a given day, Sessions may be all-online or
+// all-on-site, but not a mix.
+message OnlineOnsiteSameDay {}
+
+// HARD. At most `max_ratio` of a Group's Sessions may be online.
+// (Was a hardcoded 30% in the TimeCraft prototype; now a parameter.)
+message MaxOnlineShare {
+  // 0.0 .. 1.0
+  double max_ratio = 1;
+
+  ShareWindow window = 2;
+}
+
+enum ShareWindow {
+  SHARE_WINDOW_UNSPECIFIED = 0;
+  PER_TERM = 1;
+  PER_WEEK = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Soft types
+// ---------------------------------------------------------------------------
+
+// SOFT. Penalize Sessions in the first block of a day.
+// "First block" resolves against the tenant's TimeGrid, never a fixed index.
+message MinimizeFirstBlock {}
+
+// SOFT. Penalize Sessions in the last block of a day.
+//
+// Generalizes the prototype's "third block": with a per-tenant
+// `blocks_per_day`, the last block is not fixed at index 2.
+message MinimizeLastBlock {}
+
+// SOFT. Penalize Sessions on the listed weekdays.
+//
+// Generalizes the prototype's hardcoded "minimize Saturday" (`timeslot > 14`).
+// With tenant-configured `TimeGrid.active_days`, Saturday is not structurally
+// special — a tenant may not have it active at all, or may want to deprioritize
+// a different day.
+message MinimizeDayUsage {
+  // ISO weekday, 1 = Monday .. 7 = Sunday.
+  repeated uint32 days = 1;
+}
+
+// SOFT. Penalize use of premium/scarce Rooms.
+// `Room.rank` is ordered HIGHER = more premium; Rooms with
+// `rank >= rank_threshold` are penalized.
+message MinimizeRoomRank {
+  uint32 rank_threshold = 1;
+}
+
+// SOFT. Penalize Sessions falling in a week whose `WeekKind` is EXAM.
+//
+// Resolves against the structured Academic Calendar. The prototype's
+// `weeks[-exam_weeks:]` slicing must not be reproduced.
+message MinimizeExamWeek {}
+
+// SOFT. Penalize Sessions placed in a virtual (online) Room.
+message MinimizeOnline {}

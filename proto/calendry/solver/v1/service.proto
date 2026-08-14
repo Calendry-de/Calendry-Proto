@@ -1,0 +1,116 @@
+// Calendry solver — service definition.
+//
+// gRPC, UNARY CALLS ONLY. No held-open streams: the solver owns run state for
+// the lifetime of an in-progress run, and the Nuxt app polls GetStatus and
+// persists progress into its own `solver_run` table. This repo persists nothing
+// beyond an in-flight run.
+
+syntax = "proto3";
+
+package calendry.solver.v1;
+
+import "calendry/solver/v1/model.proto";
+
+service SolverService {
+  // Returns a run id immediately and begins optimizing in the background.
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+
+  // Status / progress / best-objective-so-far. Polled by the caller.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // Stops an in-progress run.
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+}
+
+// ---------------------------------------------------------------------------
+// StartRun
+// ---------------------------------------------------------------------------
+
+message StartRunRequest {
+  SolverInput input  = 1;
+  SolveScope  scope  = 2;
+  Budget      budget = 3;
+
+  // Determinism: the same input and the same seed must produce byte-identical
+  // output. 0 = the solver picks one and reports it in StartRunResponse.
+  uint64 seed = 4;
+
+  // Optional. A repeated StartRun with the same key returns the same run id
+  // instead of launching a second run.
+  string idempotency_key = 5;
+}
+
+// Termination: BOTH budgets apply, and whichever is hit first ends the run.
+// Both are configurable per request.
+message Budget {
+  // 0 = unbounded.
+  uint64 max_wall_millis = 1;
+
+  // 0 = unbounded.
+  uint64 max_moves = 2;
+}
+
+message StartRunResponse {
+  string run_id = 1;
+
+  // The seed actually used, echoed so a run can be reproduced exactly.
+  uint64 seed = 2;
+}
+
+// ---------------------------------------------------------------------------
+// GetStatus
+// ---------------------------------------------------------------------------
+
+message GetStatusRequest {
+  string run_id = 1;
+
+  // Results can be large and this call is polled on a timer, so the full
+  // placement is only returned when explicitly asked for. This gets the effect
+  // of a separate GetResult call without adding a fourth RPC.
+  bool include_result = 2;
+}
+
+message GetStatusResponse {
+  RunStatus status = 1;
+
+  // 0.0 .. 1.0, best-effort.
+  double progress = 2;
+
+  double best_objective  = 3;
+  uint64 moves_evaluated = 4;
+  uint64 elapsed_millis  = 5;
+
+  // Present only when the run is terminal AND include_result was set.
+  SolverOutput result = 6;
+
+  // Populated when status = FAILED.
+  string error_detail = 7;
+}
+
+// Describes the RUN's lifecycle, not the SOLUTION's quality. SUCCEEDED means
+// the run terminated normally; it says nothing about whether hard violations
+// remain in the output. That classification is a separate open question and is
+// deliberately not encoded here.
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  QUEUED    = 1;
+  RUNNING   = 2;
+  SUCCEEDED = 3;
+  CANCELLED = 4;
+  FAILED    = 5;
+}
+
+// ---------------------------------------------------------------------------
+// CancelRun
+// ---------------------------------------------------------------------------
+
+message CancelRunRequest {
+  string run_id = 1;
+}
+
+message CancelRunResponse {
+  // False if the run had already reached a terminal state.
+  bool cancelled = 1;
+
+  RunStatus status = 2;
+}
