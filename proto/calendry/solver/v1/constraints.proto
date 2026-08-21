@@ -48,12 +48,17 @@ message ConstraintConfig {
     PersonDoubleBooking person_double_booking = 17;
 
     // -- Soft --
-    MinimizeFirstBlock minimize_first_block = 20;
-    MinimizeLastBlock  minimize_last_block  = 21;
+    MinimizeFirstBlock minimize_first_block = 20 [deprecated = true];
+    MinimizeLastBlock  minimize_last_block  = 21 [deprecated = true];
     MinimizeDayUsage   minimize_day_usage   = 22;
     MinimizeRoomRank   minimize_room_rank   = 23;
     MinimizeExamWeek   minimize_exam_week   = 24;
     MinimizeOnline     minimize_online      = 25;
+
+    // Supersedes 20 and 21. Numbered after them rather than reusing either,
+    // because a renumbered field silently changes meaning for any peer still
+    // on the old schema.
+    MinimizeBlockUsage minimize_block_usage = 26;
   }
 }
 
@@ -128,13 +133,54 @@ enum ShareWindow {
 
 // SOFT. Penalize Sessions in the first block of a day.
 // "First block" resolves against the tenant's TimeGrid, never a fixed index.
-message MinimizeFirstBlock {}
+//
+// DEPRECATED: superseded by MinimizeBlockUsage, which expresses this as
+// `first = true` alongside arbitrary block positions. Retained because removing
+// a field is a wire-breaking change and `buf breaking` rejects it; senders
+// should emit MinimizeBlockUsage instead.
+message MinimizeFirstBlock {
+  option deprecated = true;
+}
 
 // SOFT. Penalize Sessions in the last block of a day.
 //
 // Generalizes the prototype's "third block": with a per-tenant
 // `blocks_per_day`, the last block is not fixed at index 2.
-message MinimizeLastBlock {}
+//
+// DEPRECATED: superseded by MinimizeBlockUsage (`last = true`). See above.
+message MinimizeLastBlock {
+  option deprecated = true;
+}
+
+// SOFT. Penalize Sessions in the listed block positions.
+//
+// Supersedes MinimizeFirstBlock and MinimizeLastBlock, and does for the BLOCK
+// axis what MinimizeDayUsage did for the day axis: the prototype's hardcoded
+// positions become a tenant-configured list.
+//
+// WHY BOTH A LIST AND TWO FLAGS, rather than indices alone.
+//
+// "First" and "last" are RELATIVE to `TimeGrid.blocks_per_day`; an index is
+// ABSOLUTE. A school on 6 blocks that configures "avoid block 5" and later
+// extends the day to 8 blocks still avoids block 5 — now mid-afternoon —
+// though nobody edited the rule. `last = true` keeps meaning the last block.
+// Absolute indices alone would therefore LOSE an intent the two deprecated
+// messages could express, so the flags are not redundancy; they are the part
+// that survives a grid resize.
+//
+// An index at or beyond `blocks_per_day` is inert, not an error: the app
+// permits a grid to shrink under its configuration, and a constraint that
+// referenced a block which no longer exists must not fail a whole run.
+message MinimizeBlockUsage {
+  // 0-based block indices to penalize. May be empty when only the flags apply.
+  repeated uint32 blocks = 1;
+
+  // Penalize the day's first block, whichever index that currently is.
+  bool first = 2;
+
+  // Penalize the day's last block, whichever index that currently is.
+  bool last = 3;
+}
 
 // SOFT. Penalize Sessions on the listed weekdays.
 //
