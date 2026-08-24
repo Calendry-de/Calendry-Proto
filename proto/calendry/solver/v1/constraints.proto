@@ -193,11 +193,28 @@ message MinimizeDayUsage {
   repeated uint32 days = 1;
 }
 
-// SOFT. Penalize use of premium/scarce Rooms.
-// `Room.rank` is ordered HIGHER = more premium; Rooms with
-// `rank >= rank_threshold` are penalized.
+// SOFT. Steer room choice by `Room.rank`, which is ordered HIGHER = more
+// premium/scarce.
+//
+// The threshold names the boundary; `invert` names which side of it is
+// penalized. Both directions are real policies: an institution may want its
+// best halls kept free for events (the default), or may want them USED for
+// teaching rather than sitting empty.
+//
+// One message with a direction flag rather than two types, for the same reason
+// MinimizeBlockUsage replaced MinimizeFirstBlock/MinimizeLastBlock: they are two
+// directions of one axis over one field. Two types could also both be enabled at
+// once, penalizing every room from both ends — a contradiction nothing could
+// prevent, since each type carries its own instances.
 message MinimizeRoomRank {
   uint32 rank_threshold = 1;
+
+  // false (default) — penalize `rank >= rank_threshold`: spare the best rooms.
+  // true            — penalize `rank <= rank_threshold`: prefer the best rooms.
+  //
+  // Added in 0.5.0. Absent decodes to false, which is the behaviour every
+  // peer already had, so an old client's messages keep their meaning.
+  bool invert = 2;
 }
 
 // SOFT. Penalize Sessions falling in a week whose `WeekKind` is EXAM.
