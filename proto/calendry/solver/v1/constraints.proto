@@ -108,9 +108,32 @@ message ExactFrequency {}
 // this constraint switches enforcement on.
 message LecturerVeto {}
 
-// HARD. For a given Group and a given day, Sessions may be all-online or
-// all-on-site, but not a mix.
-message OnlineOnsiteSameDay {}
+// SOFT. A Group should not be asked to be on campus and online on the same day.
+//
+// WAS HARD, and the reclassification is the reason it reads oddly next to the
+// other members of the `oneof`: the message is empty because it takes no
+// parameters, but its `ConstraintConfig.weight` is now meaningful where before
+// it was ignored. A peer still sending weight 0 gets "count it, do not steer",
+// which is what every soft type does with a zero weight.
+//
+// The solver used to eliminate a mixing placement in `is_free`; it now prices
+// one on the objective, so a run may return a schedule that mixes when every
+// alternative cost more. Such a day is reported in the objective breakdown, NOT
+// as a hard violation.
+message OnlineOnsiteSameDay {
+  // FIELD 1 IS RESERVED AND UNUSED — nothing is missing here.
+  //
+  // The message is deliberately empty: this type carries no parameters, and its
+  // penalty weight rides on `ConstraintConfig.weight` like every other soft
+  // type's. Field 1 is claimed now so that adding per-instance tuning later
+  // ("penalise mixing more for first-years") is an ordinary field addition
+  // rather than a publish cycle spent only on reserving the slot.
+  //
+  // Reserving a number a peer has never seen is not a breaking change: no
+  // encoder has ever emitted field 1 for this message, so no decoder can be
+  // holding data in it.
+  reserved 1;
+}
 
 // HARD. At most `max_ratio` of a Group's Sessions may be online.
 // (Was a hardcoded 30% in the TimeCraft prototype; now a parameter.)
