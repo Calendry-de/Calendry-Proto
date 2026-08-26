@@ -59,6 +59,8 @@ message ConstraintConfig {
     // because a renumbered field silently changes meaning for any peer still
     // on the old schema.
     MinimizeBlockUsage minimize_block_usage = 26;
+
+    PersonPreferenceFit person_preference_fit = 27;
   }
 }
 
@@ -248,3 +250,22 @@ message MinimizeExamWeek {}
 
 // SOFT. Penalize Sessions placed in a virtual (online) Room.
 message MinimizeOnline {}
+
+// SOFT. Reward placements landing in a Person's stated preferred days/blocks.
+//
+// The VALUES live on Person.preferred; this message is the tenant-level switch
+// and, via Constraint.weight, how much the tenant cares. Same architecture as
+// LecturerVeto, one severity down — the per-person data is not duplicated into
+// the constraint, so a tenant enabling this rule does not restate anybody's
+// preferences.
+//
+// A per-person weight override rides on Person.preferred.weight_multiplier
+// rather than here, because Constraint carries ONE weight and there is no
+// person axis to scope a constraint instance by.
+message PersonPreferenceFit {
+  // Which role_tags' preferences are counted. Empty = lecturers only, which is
+  // the intended default: a Session's attendee set includes every member of
+  // every attached Group, so counting all of them would let a large cohort's
+  // aggregate preference outweigh the person actually teaching.
+  repeated string roles = 1;
+}

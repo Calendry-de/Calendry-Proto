@@ -171,6 +171,38 @@ message Person {
   repeated string group_ids = 3;
 
   repeated Unavailability blackouts = 4;
+
+  // Soft. EMPTY MEANS NO PREFERENCE — the opposite of Unavailability below,
+  // where an empty repeated field means "every value on that axis". The two are
+  // structurally identical and semantically inverted, which is exactly why they
+  // are separate messages rather than one reused type.
+  Preference preferred = 5;
+}
+
+// A soft preference: days and blocks this person would RATHER have, weighted
+// against the tenant's other soft rules rather than enforced.
+//
+// NOT `Unavailability`, despite the identical shape. That message means "every
+// value on this axis" when a field is empty; here empty means "no preference at
+// all". Reusing it would put the inversion one refactor away from being lost,
+// and the app's own schema carries the same warning about its two tables.
+//
+// No `weeks` field: a preference is a recurring weekly shape, not a dated
+// absence. Additive later if that turns out to be wanted.
+message Preference {
+  repeated uint32 days   = 1;  // ISO weekday, 1 = Monday
+  repeated uint32 blocks = 2;  // 0-based within day
+
+  // Bounded per-person override of the tenant's person_preference_fit weight,
+  // clamped by the app to [0.5, 2.0].
+  //
+  // `optional` for REAL FIELD PRESENCE, and that is load-bearing rather than
+  // stylistic: proto3's zero default is itself a meaningful multiplier (0 would
+  // mean "ignore this person entirely"), so a plain double could not distinguish
+  // "no override" from "count them at zero". The app validates the range and the
+  // database enforces it again; a reader should still clamp defensively, since
+  // this service accepts possibly-invalid input by design.
+  optional double weight_multiplier = 3;
 }
 
 // A blackout window. Empty repeated field = "all values on that axis", so
