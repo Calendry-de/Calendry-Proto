@@ -223,6 +223,29 @@ message Group {
   string parent_id = 2;  // empty = root
   string name      = 3;
   uint32 size      = 4;
+
+  // Periods this Group is NOT available, same message and same "empty axis =
+  // every value on that axis" rule as `Person.blackouts`. Enforced only when
+  // the tenant enables `GroupVeto`; the VALUES are Group data, the switch is
+  // tenant policy.
+  //
+  // NEGATIVE, while the app stores the POSITIVE. A tenant sets "this cohort
+  // runs weeks 1-6 of the Term" — a date range inside one Term — and the app
+  // inverts it to the complementary week indices at assembly. The inversion is
+  // deliberate and one-directional: reusing `Unavailability` keeps one
+  // convention for absence across Person and Group, and keeps the solver's
+  // existing slot-blocking machinery rather than adding a second, opposite one
+  // (see the note on `Preference` above for what happens when two
+  // structurally-identical messages mean opposite things).
+  //
+  // INHERITS DOWNWARD. A blackout on a Group applies to that Group and its
+  // DESCENDANTS: a programme unavailable in a period means every cohort inside
+  // it is too. It does NOT propagate upward — a leaf cohort's absence must not
+  // block its parent's lecture, which the parent's other children still
+  // attend. Note this is the opposite direction from the conflict closure,
+  // which flows both ways; getting it backwards would let one seminar's break
+  // veto a whole faculty's timetable, and looks correct on any flat fixture.
+  repeated Unavailability blackouts = 5;
 }
 
 // ---------------------------------------------------------------------------

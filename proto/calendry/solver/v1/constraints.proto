@@ -61,6 +61,11 @@ message ConstraintConfig {
     MinimizeBlockUsage minimize_block_usage = 26;
 
     PersonPreferenceFit person_preference_fit = 27;
+
+    // Hard, numbered here rather than in the 13-17 band for the same reason
+    // PersonDoubleBooking was: renumbering an approved field silently changes
+    // its meaning for any peer still on the old schema.
+    GroupVeto group_veto = 28;
   }
 }
 
@@ -109,6 +114,18 @@ message ExactFrequency {}
 // are per-person data, whereas this config is tenant-level policy. Enabling
 // this constraint switches enforcement on.
 message LecturerVeto {}
+
+// HARD. A Session is never placed during a blackout window of any Group
+// attending it.
+//
+// Exactly the shape of LecturerVeto one entity across: no parameters, because
+// the windows live on `Group.blackouts` as Group data while this config is
+// tenant-level policy, and enabling it switches enforcement on.
+//
+// "Attending it" resolves DOWNWARD through the hierarchy — a Group's blackout
+// binds that Group and its descendants, never its ancestors. `Group.blackouts`
+// carries the full reasoning and the failure the direction prevents.
+message GroupVeto {}
 
 // SOFT. A Group should not be asked to be on campus and online on the same day.
 //
