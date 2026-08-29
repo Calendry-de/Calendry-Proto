@@ -52,6 +52,11 @@ message SolverInput {
   // is deterministic and replayable: re-running the same snapshot tomorrow must
   // produce the same answer.
   SlotRef reference_slot = 12;
+
+  // Rules relating specific Offerings to each other — Offering `db-lecture`
+  // must never coincide with Offering `db-lab`, rather than a rule about a
+  // kind or category. See `OfferingRelation` in constraints.proto.
+  repeated OfferingRelation offering_relations = 13;
 }
 
 // ---------------------------------------------------------------------------

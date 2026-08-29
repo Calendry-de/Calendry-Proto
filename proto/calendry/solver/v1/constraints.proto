@@ -678,3 +678,57 @@ message MaxConcurrentOnlineSessions {
 // No parameters: the values (`Group.size`, `Room.capacity`) already exist on
 // the wire; this only switches the cross-check on.
 message GroupSizeFitsRoom {}
+
+// ---------------------------------------------------------------------------
+// Offering relations
+//
+// A whole family of requested rules — Precedence, DifferentTime, SameTime/
+// SameDays/SameStart, MeetTogether/CanShareRoom, and the "N hours between"
+// variants — needs a pointer no `ConstraintConfig` field can hold: a
+// reference to SPECIFIC Offerings, not a category. `applies_to_kinds` names
+// a kind; these rules name Offering `db-lecture` and Offering `db-lab`.
+//
+// One mechanism for all of them: an ORDERED set of Offering references, a
+// relation type, and that type's own parameters. Only the evaluator differs
+// between relation types — the reference, its ordering and its dangling-id
+// semantics are built once here rather than once per type. See the solver
+// repo's ADR-0028 for the full reasoning, including why this is a NEW
+// top-level message rather than another `ConstraintConfig.params` variant
+// (a relation's parameters ARE the Offering-id list; kind-scoping has
+// nothing to say about it) and why `offering_ids` is ordered even though
+// only a few future relation types (Precedence, Next Day, Two Days After)
+// ever read that order.
+// ---------------------------------------------------------------------------
+
+message OfferingRelation {
+  string id = 1;
+
+  bool enabled = 2;
+
+  // Meaningful for SOFT relation types only; ignored for HARD types — same
+  // convention as `ConstraintConfig.weight`.
+  double weight = 3;
+
+  // Which Offerings this relation relates, in the tenant's stated order.
+  // Symmetric types (`DifferentTime`) ignore the order; a future
+  // order-sensitive type (Precedence) reads position 0 as "first".
+  //
+  // A dangling id here is a structural error, not a feasibility one — see
+  // `ConvertError::UnknownOffering` in the solver repo — because a relation
+  // silently missing one of its own operands would enforce a DIFFERENT rule
+  // than the one configured, not a looser version of the same one.
+  repeated string offering_ids = 4;
+
+  oneof params {
+    DifferentTime different_time = 10;
+  }
+}
+
+// HARD. No two members of the enclosing relation may ever share a slot —
+// the same shape as `RoomDoubleBooking`, keyed by relation membership
+// instead of by Room. Symmetric: `OfferingRelation.offering_ids`' order is
+// irrelevant to this type.
+//
+// No parameters: which Offerings are related is entirely the enclosing
+// `OfferingRelation.offering_ids`, not anything carried here.
+message DifferentTime {}
