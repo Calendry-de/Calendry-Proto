@@ -73,10 +73,23 @@ message ConstraintConfig {
     // its meaning for any peer still on the old schema.
     GroupVeto group_veto = 28;
 
+    // Built — see solver ADR/CLAUDE.md. `Compactness.scope` selects which
+    // axis (GROUP/PERSON, empty = both) this instance's weight applies to.
+    Compactness compactness = 29;
+
     // PROTO ONLY — no evaluator yet. See each message's own comment for what
     // is staged and what a solver still refuses.
-    Compactness         compactness          = 29;
     LecturerConsistency lecturer_consistency = 30;
+
+    // SOFT. Reads `Offering.scheduling_pattern` per Offering — this instance
+    // only prices the Offerings tagged for its own pattern, and an Offering
+    // left UNSPECIFIED is priced by neither, unchanged from today. Two
+    // separate types rather than one parameterized by pattern (contrast
+    // `Compactness`'s single type over GROUP/PERSON): the two patterns' cost
+    // functions share nothing — one counts distinct weekly slots used, the
+    // other counts idle weeks in a term-spanning window.
+    DistributedPatternAdherence distributed_pattern_adherence = 31;
+    BlockPatternAdherence       block_pattern_adherence        = 32;
   }
 }
 
@@ -321,12 +334,9 @@ message PersonPreferenceFit {
 // SOFT. Minimize idle blocks between an attending Group's or Person's first
 // and last Session of a day.
 //
-// PROTO ONLY — UNIMPLEMENTED. No solver evaluator reads this message yet;
-// enabling it does nothing. Staged ahead of the evaluator the same way
-// ADR-0026 staged `PersonPreferenceFit`: the schema field first, so app-side
-// plumbing is not itself blocked on the solver work.
+// Built — see the solver repo's ADR/CLAUDE.md.
 //
-// Genuinely a new shape, not a fit for any of the solver's four existing
+// Genuinely a new shape, not a fit for any of the solver's four ORIGINAL
 // constraint shapes (see the solver repo's CLAUDE.md): it needs the WHOLE of
 // one day's session set for one Group or Person at once, and the quantity is
 // a continuous gap COUNT rather than a per-placement cost, a boolean filter,
@@ -368,3 +378,31 @@ enum CompactnessScope {
 // second new shape, keyed by Offering rather than by Group and unbounded by
 // day or window, unlike every existing aggregate type.
 message LecturerConsistency {}
+
+// SOFT. Prices an Offering tagged `SCHEDULING_PATTERN_DISTRIBUTED` (see
+// `Offering.scheduling_pattern`) for spreading its Sessions across more than
+// one weekly `(weekday, block)` slot. Cost: the number of DISTINCT weekly
+// slots the Offering's currently-placed Sessions occupy, minus one — zero
+// when every Session shares one slot ("Mondays at 10, every week"), and
+// growing with each additional distinct slot used, regardless of how many
+// Sessions land in each. An Offering tagged BLOCK or UNSPECIFIED is untouched
+// by this instance; see `BlockPatternAdherence` for the other pattern.
+//
+// Built — see the solver repo's ADR/CLAUDE.md. Empty message: the only
+// parameter this type needs — which Offerings it prices — comes from reading
+// `Offering.scheduling_pattern` per Offering, not from anything configured
+// here.
+message DistributedPatternAdherence {}
+
+// SOFT. Prices an Offering tagged `SCHEDULING_PATTERN_BLOCK` for spreading
+// its Sessions across a wide span of the Term instead of a short window.
+// Cost: idle WEEKS between the Offering's first and last week with any
+// placed Session — the exact `Compactness` gap-counting shape, but at week
+// granularity and scoped by Offering rather than by Group or Person. Zero
+// when every Session falls in one contiguous run of weeks. An Offering
+// tagged DISTRIBUTED or UNSPECIFIED is untouched by this instance; see
+// `DistributedPatternAdherence` for the other pattern.
+//
+// Built — see the solver repo's ADR/CLAUDE.md. Empty for the same reason
+// `DistributedPatternAdherence` is.
+message BlockPatternAdherence {}

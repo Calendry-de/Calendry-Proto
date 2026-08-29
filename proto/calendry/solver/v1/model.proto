@@ -345,14 +345,12 @@ message Offering {
   // shape, staged the same way.
   uint32 required_room_count = 16;
 
-  // How this Offering's demand should distribute across the Term. Metadata
-  // only for now: nothing currently reads it, so every Offering solves as it
-  // always has regardless of what is set here.
-  //
-  // PROTO ONLY — no constraint type enforces either pattern yet. Which shape
-  // that takes (per-Offering aggregate vs. a dedicated constraint type per
-  // pattern) is still an open design question; this field stages the
-  // classification data ahead of that decision without committing to it.
+  // How this Offering's demand should distribute across the Term.
+  // UNSPECIFIED (the default) is untouched by either enforcing constraint
+  // type, so an Offering that never sets this solves exactly as it always
+  // has. See `DistributedPatternAdherence` / `BlockPatternAdherence` in
+  // constraints.proto for the two dedicated constraint types that read it —
+  // one per pattern, since the two patterns' cost functions share nothing.
   SchedulingPattern scheduling_pattern = 17;
 }
 
