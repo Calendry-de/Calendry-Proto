@@ -328,21 +328,17 @@ message Offering {
 
   // Room requirements that carry a minimum COUNT, alongside the
   // presence-only `required_room_features` above. Both apply when both are
-  // set — this is an addition, not a replacement.
-  //
-  // PROTO ONLY — the solver's room-eligibility filter does not read this yet;
-  // it checks `required_room_features` against `Room.feature_tags` only.
+  // set — this is an addition, not a replacement. Built: checked against
+  // `Room.feature_quantities`, additive alongside `required_room_features`.
   repeated RoomFeatureRequirement room_feature_requirements = 15;
 
   // How many Rooms one Session of this Offering must occupy SIMULTANEOUSLY.
   // 0 and 1 both mean today's single-room behavior; the solver has never had
-  // a reason to distinguish "unset" from "one".
-  //
-  // PROTO ONLY — the solver assigns exactly one Room to every placement
-  // regardless of this field; a value above 1 is accepted and silently not
-  // honoured until the search gains a multi-room placement primitive. See
+  // a reason to distinguish "unset" from "one". Built, up to 4 Rooms per
+  // Session (1 primary + 3 additional) — a higher value is refused rather
+  // than silently truncated. Capacity is the SUM across the combination. See
   // `Session.room_ids` / `PlacedSession.room_ids` for the matching output
-  // shape, staged the same way.
+  // shape.
   uint32 required_room_count = 16;
 
   // How this Offering's demand should distribute across the Term.
@@ -422,10 +418,10 @@ message Session {
   // included. Empty for an ordinary single-room Session — `room_id` alone is
   // already the complete answer there, so this is not populated redundantly.
   //
-  // PROTO ONLY — see `Offering.required_room_count`, which this exists to
-  // carry occupancy for. Meaningless input today: `partition_sessions`
-  // reads only `room_id`, so a caller sending several here for an EXISTING
-  // Session has every extra entry silently dropped, not honoured.
+  // Built — see `Offering.required_room_count`. `partition_sessions` reads
+  // this as the AUTHORITATIVE full set when non-empty; entries beyond the
+  // 4-Room cap are truncated, not refused, the same "warn and allow" reading
+  // every other conversion limit here gets.
   repeated string room_ids = 13;
 }
 
@@ -556,11 +552,7 @@ message PlacedSession {
 
   // The full set of Rooms this Session occupies, `room_id` included. Empty
   // for an ordinary single-room Session — see `Session.room_ids`, the input
-  // counterpart, for why that is not redundant duplication.
-  //
-  // PROTO ONLY — never populated today: the solver assigns one Room per
-  // placement, so this stays empty until `Offering.required_room_count` has
-  // an evaluator.
+  // counterpart, for why that is not redundant duplication. Built.
   repeated string room_ids = 10;
 }
 
