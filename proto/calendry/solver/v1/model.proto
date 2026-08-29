@@ -443,6 +443,15 @@ message SolveScope {
   repeated string group_ids    = 2;
 
   LockPolicy outside_scope_policy = 3;
+
+  // Only meaningful under LOCK_POLICY_MINIMIZE_MOVEMENT; ignored otherwise.
+  // Charged once, exactly like every other soft weight, when a moved
+  // out-of-scope Session's slot OR room differs from where it already was —
+  // a room-only change counts as "moved" too. Non-optional: 0 is a legitimate,
+  // unambiguous state ("track disturbance but do not steer against it"), the
+  // same reading every other soft weight gives a zero, so there is no
+  // "unset vs zero" distinction to preserve.
+  double minimize_movement_weight = 4;
 }
 
 enum LockPolicy {
@@ -451,9 +460,9 @@ enum LockPolicy {
   // v1: everything outside scope is hard-locked and never moved.
   LOCK_POLICY_HARD = 1;
 
-  // v2, deferred: a soft minimize-movement penalty replaces the hard lock, so
-  // the solver MAY disturb out-of-scope Sessions when genuinely necessary but
-  // is heavily biased against it. Rejected with UNIMPLEMENTED by v1.
+  // v2: a soft minimize-movement penalty replaces the hard lock, so the
+  // solver MAY disturb out-of-scope Sessions when genuinely necessary but is
+  // biased against it by `SolveScope.minimize_movement_weight`.
   LOCK_POLICY_MINIMIZE_MOVEMENT = 2;
 }
 
