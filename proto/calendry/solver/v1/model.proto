@@ -152,10 +152,29 @@ message Room {
   // the Session, so room-assignment logic stays uniform.
   bool is_virtual = 7;
 
-  // Tenant-defined equipment/feature vocabulary.
+  // Tenant-defined equipment/feature vocabulary. PRESENCE only — a Room either
+  // carries a feature or does not. See `feature_quantities` for a feature this
+  // Room carries several units of.
   repeated string feature_tags = 8;
 
   string location = 9;
+
+  // How many units of a feature this Room supplies, for features where a
+  // COUNT matters (e.g. "workstation": 24) rather than mere presence.
+  //
+  // PROTO ONLY — the solver does not yet match `Offering.
+  // room_feature_requirements.min_quantity` against this; eligibility still
+  // checks `feature_tags` membership alone. A feature named here SHOULD also
+  // appear in `feature_tags`, since existing tenant-facing eligibility
+  // (`required_room_features`) reads only `feature_tags` and is not being
+  // changed by this field.
+  repeated RoomFeatureQuantity feature_quantities = 10;
+}
+
+// One counted feature a Room supplies. See `Room.feature_quantities`.
+message RoomFeatureQuantity {
+  string feature  = 1;
+  uint32 quantity = 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +222,22 @@ message Preference {
   // database enforces it again; a reader should still clamp defensively, since
   // this service accepts possibly-invalid input by design.
   optional double weight_multiplier = 3;
+
+  // Room-type preference: features this Person would prefer their placements'
+  // Room to carry. Empty = no room-type preference stated — additive on the
+  // same "no preference" reading as an empty `days`/`blocks`.
+  //
+  // References `Room.feature_tags`' vocabulary by KEY, not by an id: matches
+  // what already crosses the wire for `Offering.required_room_features`, and
+  // survives an Equipment row being re-keyed only if the app updates the
+  // string here too — a deleted/renamed Equipment leaves a stale string that
+  // is inert rather than wrong, the same tradeoff already accepted for room
+  // requirements.
+  //
+  // PROTO ONLY — no evaluator reads this yet. `PersonPreferenceFit` counts
+  // `days`/`blocks` only; widening it to this axis is solver-side work, not a
+  // second wire change, since this rides the same tenant-level switch.
+  repeated string preferred_room_features = 4;
 }
 
 // A blackout window. Empty repeated field = "all values on that axis", so
@@ -279,6 +314,10 @@ message Offering {
   // Directly-assigned individuals, independent of Group membership.
   repeated string participant_person_ids = 10;
 
+  // PRESENCE only — matched against `Room.feature_tags`. See
+  // `room_feature_requirements` for a feature that needs a minimum COUNT
+  // (e.g. "needs 24 workstations"), which this field cannot express: it can
+  // only ask that a Room carry a workstation, not how many.
   repeated string required_room_features = 11;
   uint32          min_capacity           = 12;
 
@@ -286,6 +325,65 @@ message Offering {
   repeated string allowed_room_ids = 13;
 
   bool allow_online = 14;
+
+  // Room requirements that carry a minimum COUNT, alongside the
+  // presence-only `required_room_features` above. Both apply when both are
+  // set — this is an addition, not a replacement.
+  //
+  // PROTO ONLY — the solver's room-eligibility filter does not read this yet;
+  // it checks `required_room_features` against `Room.feature_tags` only.
+  repeated RoomFeatureRequirement room_feature_requirements = 15;
+
+  // How many Rooms one Session of this Offering must occupy SIMULTANEOUSLY.
+  // 0 and 1 both mean today's single-room behavior; the solver has never had
+  // a reason to distinguish "unset" from "one".
+  //
+  // PROTO ONLY — the solver assigns exactly one Room to every placement
+  // regardless of this field; a value above 1 is accepted and silently not
+  // honoured until the search gains a multi-room placement primitive. See
+  // `Session.room_ids` / `PlacedSession.room_ids` for the matching output
+  // shape, staged the same way.
+  uint32 required_room_count = 16;
+
+  // How this Offering's demand should distribute across the Term. Metadata
+  // only for now: nothing currently reads it, so every Offering solves as it
+  // always has regardless of what is set here.
+  //
+  // PROTO ONLY — no constraint type enforces either pattern yet. Which shape
+  // that takes (per-Offering aggregate vs. a dedicated constraint type per
+  // pattern) is still an open design question; this field stages the
+  // classification data ahead of that decision without committing to it.
+  SchedulingPattern scheduling_pattern = 17;
+}
+
+// See `Offering.room_feature_requirements`.
+message RoomFeatureRequirement {
+  string feature = 1;
+
+  // Absent = "must be present", no specific count — the same question
+  // `required_room_features` already asks. Set = the Room must supply at
+  // least this many units of `feature` (see `Room.feature_quantities`).
+  //
+  // `optional` for REAL FIELD PRESENCE: proto3's zero default cannot
+  // distinguish "no minimum stated" from "needs zero", which is meaningless
+  // for something REQUIRED — the same reasoning `Preference.weight_multiplier`
+  // above is `optional` for.
+  optional uint32 min_quantity = 2;
+}
+
+// How an Offering's demand distributes across the Term. See
+// `Offering.scheduling_pattern`.
+enum SchedulingPattern {
+  SCHEDULING_PATTERN_UNSPECIFIED = 0;
+
+  // A consistent weekly slot for the whole Term. Today's implicit behavior:
+  // nothing currently enforces it, so the solver may in principle place each
+  // week's occurrence independently.
+  SCHEDULING_PATTERN_DISTRIBUTED = 1;
+
+  // The whole demand concentrated into a short contiguous window, rather than
+  // spread one-per-week across the Term.
+  SCHEDULING_PATTERN_BLOCK = 2;
 }
 
 message Session {
@@ -305,6 +403,11 @@ message Session {
   SlotRef start_slot     = 6;
   uint32  duration_blocks = 7;
 
+  // The PRIMARY Room, and the only one for a single-room Session. Stays
+  // meaningful on its own for a Session using exactly one Room — a
+  // multi-room Session ALSO fills `room_ids` with the complete set, `room_id`
+  // included, so a reader that has not adopted the plural field still sees
+  // one (the primary) Room rather than nothing.
   string          room_id      = 8;
   repeated string lecturer_ids = 9;
   repeated string group_ids    = 10;
@@ -316,6 +419,16 @@ message Session {
   // Distinct from being out of scope, which is merely expensive to violate.
   // Scope membership is NOT stored here — it comes from SolveScope.
   bool is_locked = 12;
+
+  // The full set of Rooms this Session occupies simultaneously, `room_id`
+  // included. Empty for an ordinary single-room Session — `room_id` alone is
+  // already the complete answer there, so this is not populated redundantly.
+  //
+  // PROTO ONLY — see `Offering.required_room_count`, which this exists to
+  // carry occupancy for. Meaningless input today: `partition_sessions`
+  // reads only `room_id`, so a caller sending several here for an EXISTING
+  // Session has every extra entry silently dropped, not honoured.
+  repeated string room_ids = 13;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +496,29 @@ message SolverOutput {
 
   ObjectiveBreakdown objective = 3;
   SolveStats         stats     = 4;
+
+  // DRAFT — NOT COMMITTED. Additional alternative solutions to the SAME
+  // request, for a caller to choose between rather than receiving one best
+  // result. `sessions` / `hard_violations` / `objective` above are UNCHANGED
+  // and remain the authoritative single result for every existing caller;
+  // this is a purely additive, ignorable extra view.
+  //
+  // What is NOT decided here, and is exactly why this is marked draft: how
+  // many candidates, how "genuinely different" is defined and enforced
+  // (near-duplicates are useless), and whether the search can produce this
+  // cheaply in one run or needs several. Shipping a field before those
+  // questions are settled risks the field's shape being wrong for the answer
+  // — recorded anyway because a wire shape has to exist for the design
+  // conversation to react to, and reacting to a concrete shape is easier
+  // than to a description of one.
+  repeated SolverCandidate candidates = 5;
+}
+
+// One alternative full result. See `SolverOutput.candidates`.
+message SolverCandidate {
+  repeated PlacedSession       sessions        = 1;
+  repeated ConstraintViolation hard_violations = 2;
+  ObjectiveBreakdown           objective       = 3;
 }
 
 message PlacedSession {
@@ -397,12 +533,37 @@ message PlacedSession {
   repeated string lecturer_ids = 6;
   repeated string group_ids    = 7;
   repeated string person_ids   = 8;
+
+  // Stable within THIS response only, never across a re-solve: real
+  // session_id when set, otherwise `offering_id` + "#" + occurrence for a
+  // Session this run invented (occurrence is this run's internal placement
+  // index, not anything the caller assigned). Exists so
+  // `ConstraintViolation.session_ids` can name a Session this run created and
+  // still have the caller resolve it back to a concrete entry in `sessions`
+  // above — before this field, a violation naming an invented Session carried
+  // a label that matched nothing else in the response, because `session_id`
+  // on a new Session is deliberately empty. Not an identity scheme for the
+  // Session across runs; once persisted, the caller's own session_id is what
+  // a later run reuses.
+  string placement_ref = 9;
+
+  // The full set of Rooms this Session occupies, `room_id` included. Empty
+  // for an ordinary single-room Session — see `Session.room_ids`, the input
+  // counterpart, for why that is not redundant duplication.
+  //
+  // PROTO ONLY — never populated today: the solver assigns one Room per
+  // placement, so this stays empty until `Offering.required_room_count` has
+  // an evaluator.
+  repeated string room_ids = 10;
 }
 
 message ConstraintViolation {
   string constraint_id   = 1;
   string constraint_type = 2;
 
+  // Each entry equals some PlacedSession.placement_ref in the same response,
+  // so a violation is always resolvable to a concrete Session — including one
+  // this run invented, whose session_id is empty. See placement_ref's comment.
   repeated string session_ids  = 3;
   repeated string offering_ids = 4;
 

@@ -1,10 +1,16 @@
 // Calendry solver — constraint catalogue.
 //
-// 14 predefined constraint types. Each type gets exactly ONE typed, compiled
-// evaluator function in the solver, reading that type's typed parameters.
-// There is no interpreter and no free-form expression language: tenant-supplied
-// logic never executes. A tenant configures a constraint by choosing a
-// predefined type and filling in its typed parameters.
+// A catalogue of predefined constraint types, not a fixed count of them — it
+// grows by addition (see the numbering note on `ConstraintConfig.params`
+// below). Each type gets exactly ONE typed, compiled evaluator function in
+// the solver, reading that type's typed parameters. There is no interpreter
+// and no free-form expression language: tenant-supplied logic never executes.
+// A tenant configures a constraint by choosing a predefined type and filling
+// in its typed parameters.
+//
+// A type appearing here is not a promise the solver evaluates it yet: a few
+// are staged schema-first, ahead of their evaluator, and say so in their own
+// comment — check the solver repo's CLAUDE.md for what is actually built.
 //
 // Hard-vs-soft is a property of the TYPE, not of the config — it is compiled
 // into the evaluator and cannot be flipped per tenant.
@@ -66,6 +72,11 @@ message ConstraintConfig {
     // PersonDoubleBooking was: renumbering an approved field silently changes
     // its meaning for any peer still on the old schema.
     GroupVeto group_veto = 28;
+
+    // PROTO ONLY — no evaluator yet. See each message's own comment for what
+    // is staged and what a solver still refuses.
+    Compactness         compactness          = 29;
+    LecturerConsistency lecturer_consistency = 30;
   }
 }
 
@@ -263,7 +274,27 @@ message MinimizeRoomRank {
 //
 // Resolves against the structured Academic Calendar. The prototype's
 // `weeks[-exam_weeks:]` slicing must not be reproduced.
-message MinimizeExamWeek {}
+message MinimizeExamWeek {
+  // false (default) — today's only behavior, unchanged: penalize placing an
+  // ordinary Session in an EXAM week, keeping regular lessons out of it.
+  // true            — invert the direction: penalize NOT placing in an EXAM
+  // week, so an exam-kind Session is pushed toward the exam period instead of
+  // away from it.
+  //
+  // One message with a direction flag, not a second type — the same
+  // reasoning `MinimizeRoomRank.invert` and `MinimizeBlockUsage` (superseding
+  // `MinimizeFirstBlock`/`MinimizeLastBlock`) already established for this
+  // schema: two separate types could both be enabled at once and penalize
+  // every placement from both ends, a contradiction nothing could prevent
+  // since each type carries its own instances.
+  //
+  // Added absent from any peer's prior use of this message (it was empty), so
+  // absent decodes to false — every existing sender's meaning is unchanged.
+  //
+  // PROTO ONLY. The solver does not yet read this field; `invert` still
+  // resolves to the pre-existing (non-inverted) behavior everywhere.
+  bool invert = 1;
+}
 
 // SOFT. Penalize Sessions placed in a virtual (online) Room.
 message MinimizeOnline {}
@@ -286,3 +317,54 @@ message PersonPreferenceFit {
   // aggregate preference outweigh the person actually teaching.
   repeated string roles = 1;
 }
+
+// SOFT. Minimize idle blocks between an attending Group's or Person's first
+// and last Session of a day.
+//
+// PROTO ONLY — UNIMPLEMENTED. No solver evaluator reads this message yet;
+// enabling it does nothing. Staged ahead of the evaluator the same way
+// ADR-0026 staged `PersonPreferenceFit`: the schema field first, so app-side
+// plumbing is not itself blocked on the solver work.
+//
+// Genuinely a new shape, not a fit for any of the solver's four existing
+// constraint shapes (see the solver repo's CLAUDE.md): it needs the WHOLE of
+// one day's session set for one Group or Person at once, and the quantity is
+// a continuous gap COUNT rather than a per-placement cost, a boolean filter,
+// or a cardinality ratio. Closest structurally to `OnlineOnsiteSameDay`, which
+// is also day-granularity and reads what else is already placed that day
+// rather than the candidate alone — but that type accumulates a boolean per
+// `(group, day)` cell, not a gap count, so it is a relative rather than an
+// exact precedent.
+message Compactness {
+  // Empty = both axes counted independently. Restrict to just one if a tenant
+  // cares about, say, Group compactness but not Person compactness.
+  repeated CompactnessScope scope = 1;
+}
+
+enum CompactnessScope {
+  COMPACTNESS_SCOPE_UNSPECIFIED = 0;
+  COMPACTNESS_SCOPE_GROUP       = 1;
+  COMPACTNESS_SCOPE_PERSON      = 2;
+}
+
+// SOFT. Once a lecturer holds one Session of a recurring Offering, they
+// should hold the rest of it too — not switch week to week.
+//
+// PROTO ONLY — UNIMPLEMENTED, and unlike `Compactness` this one has a
+// PREREQUISITE that does not exist yet either: genuine lecturer-POOL
+// selection. v1 only accepts the degenerate case
+// `candidate_lecturer_ids.len() == required_lecturer_count` (see
+// `ConvertError::LecturerPoolUnsupported` in the solver repo) — there is no
+// CHOICE across an Offering's Sessions for this type to be consistent about
+// until that lands. Shipping the field now would let it sit configured and
+// silently inert once the prerequisite is missing, which is exactly the
+// `lecturer_veto`-shaped failure this schema's other staged types are
+// written to avoid — so `applies_to_kinds`/`enabled` on this instance are
+// meaningless until pool selection exists, and a solver pin that reads this
+// message must refuse it with the same discipline `PersonPreferenceFit` used
+// before its evaluator landed, not silently ignore it.
+//
+// Aggregate over an entire Offering's Sessions across the WHOLE TERM — a
+// second new shape, keyed by Offering rather than by Group and unbounded by
+// day or window, unlike every existing aggregate type.
+message LecturerConsistency {}
