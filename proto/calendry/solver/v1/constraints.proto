@@ -100,6 +100,16 @@ message ConstraintConfig {
     RoomTurnaroundBuffer       room_turnaround_buffer        = 44;
     MaxConcurrentOnlineSessions max_concurrent_online_sessions = 45;
     GroupSizeFitsRoom          group_size_fits_room          = 46;
+
+    // Staged together for one version bump, same as the P2 batch above but
+    // added afterward — numbered to continue that band rather than
+    // renumbering anything already approved.
+    MaxDailySessionCount       max_daily_session_count       = 47;
+
+    // The (Offering, day) cluster — see the three messages' own section.
+    MaxOfferingSessionsPerDay    max_offering_sessions_per_day    = 48;
+    MaxConsecutiveOfferingBlocks max_consecutive_offering_blocks  = 49;
+    MinimizeOfferingDaySplit     minimize_offering_day_split      = 50;
   }
 }
 
@@ -435,6 +445,53 @@ message MaxDailySpan {
   // past the cap.
   uint32 max_span_blocks = 2;
 }
+
+// SOFT. Caps a raw Session COUNT per day for a Group and/or a Person — the
+// volume-limit sibling of `MaxDailySpan` (elapsed time) and
+// `MaxConsecutiveBlocks` (continuity): a day can satisfy both of those and
+// still be overloaded (e.g. 6 lessons split 3 + gap + 3). Priced once the
+// cap is exceeded rather than refused, the same reasoning
+// `MaxWeeklyTeachingLoad` and ADR-0025 give: a hard cap on a count only
+// fully known as placements accumulate risks the same dead-end-construction
+// problem.
+message MaxDailySessionCount {
+  repeated CompactnessScope scope = 1; // empty = both axes independently
+
+  // Sessions past which a day is penalized, per Session past the cap.
+  uint32 max_per_day = 2;
+}
+
+// ---------------------------------------------------------------------------
+// The (Offering, day) cluster
+//
+// Three rules reduce the same cell — one Offering's occupied blocks within
+// one day — three different ways: a raw Session count, the longest
+// consecutive run, and the number of separated runs. Distinguishes an
+// intentional multi-block Session (`Offering.duration_blocks`, one
+// placement) from several separate Sessions landing consecutively (or
+// split apart) by accident. All SOFT, priced once exceeded rather than
+// refused — the same ADR-0025 reasoning `MaxDailySessionCount` gives.
+// ---------------------------------------------------------------------------
+
+// Caps a raw Session COUNT of one Offering on one day — "Maths, 4x a week"
+// means four different days unless a tenant says otherwise.
+message MaxOfferingSessionsPerDay {
+  // Sessions past which a day is penalized, per Session past the cap.
+  uint32 max_per_day = 1;
+}
+
+// Caps how many blocks of one Offering may run back to back in a day.
+message MaxConsecutiveOfferingBlocks {
+  // Blocks past which a run is penalized, per block past the cap.
+  uint32 max_consecutive = 1;
+}
+
+// Prices the number of non-contiguous runs of one Offering's Sessions
+// within a day, minus one — zero for a single run (including a lone
+// Session). NOT the same question `Compactness` asks: a day packed solid
+// with unrelated teaching in between two runs of the same Offering has
+// zero gaps and still splits it.
+message MinimizeOfferingDaySplit {}
 
 // SOFT. Spreads a Group's Sessions evenly across its active days rather than
 // clustering. Measured as the VARIANCE of per-day Session counts across

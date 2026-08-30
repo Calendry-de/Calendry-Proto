@@ -135,7 +135,12 @@ message Room {
     string federation_id = 3;
   }
 
-  string name     = 4;
+  string name = 4;
+
+  // `0` means UNBOUNDED, not "fits nobody" — a Room nobody has measured (or
+  // an online Room, which has no seating to run out of) is not the same
+  // state as one measured to hold zero people, and there is no separate
+  // field to distinguish "unset" from "zero" here.
   uint32 capacity = 5;
 
   // Desirability. HIGHER = more premium/scarce. MinimizeRoomRank penalizes
