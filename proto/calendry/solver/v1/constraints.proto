@@ -5,8 +5,6 @@
 // below). Each type gets exactly ONE typed, compiled evaluator function in
 // the solver, reading that type's typed parameters. There is no interpreter
 // and no free-form expression language: tenant-supplied logic never executes.
-// A tenant configures a constraint by choosing a predefined type and filling
-// in its typed parameters.
 //
 // A type appearing here is not a promise the solver evaluates it yet: a few
 // are staged schema-first, ahead of their evaluator, and say so in their own
@@ -73,29 +71,21 @@ message ConstraintConfig {
     // its meaning for any peer still on the old schema.
     GroupVeto group_veto = 28;
 
-    // Built — see solver ADR/CLAUDE.md. `Compactness.scope` selects which
-    // axis (GROUP/PERSON, empty = both) this instance's weight applies to.
+    // `Compactness.scope` selects which axis (GROUP/PERSON, empty = both)
+    // this instance's weight applies to.
     Compactness compactness = 29;
 
-    // PROTO ONLY — no evaluator yet. See each message's own comment for what
-    // is staged and what a solver still refuses.
     LecturerConsistency lecturer_consistency = 30;
 
     // SOFT. Reads `Offering.scheduling_pattern` per Offering — this instance
-    // only prices the Offerings tagged for its own pattern, and an Offering
-    // left UNSPECIFIED is priced by neither, unchanged from today. Two
-    // separate types rather than one parameterized by pattern (contrast
+    // only prices the Offerings tagged for its own pattern. Two separate
+    // types rather than one parameterized by pattern (contrast
     // `Compactness`'s single type over GROUP/PERSON): the two patterns' cost
-    // functions share nothing — one counts distinct weekly slots used, the
-    // other counts idle weeks in a term-spanning window.
+    // functions share nothing.
     DistributedPatternAdherence distributed_pattern_adherence = 31;
     BlockPatternAdherence       block_pattern_adherence        = 32;
 
     // -- P2 batch: room fit, day/week aggregates, tenant-wide policy --
-    //
-    // Staged together for one proto version bump; each type's own comment
-    // says whether the solver reads it yet — check the solver repo's
-    // CLAUDE.md for what is actually built as of any given pin.
     MinimizeCapacityWaste      minimize_capacity_waste       = 33;
     MinimizeLocationChange     minimize_location_change      = 34;
     MaxConsecutiveBlocks       max_consecutive_blocks        = 35;
@@ -147,62 +137,42 @@ message PersonDoubleBooking {}
 // ---------------------------------------------------------------------------
 
 // HARD. Each in-scope Offering must be realized by exactly
-// `Offering.required_session_count` placed Sessions.
-// No parameters — the count is Offering data, not constraint policy.
+// `Offering.required_session_count` placed Sessions. No parameters — the
+// count is Offering data, not constraint policy.
 message ExactFrequency {}
 
 // HARD. A Person is never assigned as Lecturer during one of their declared
-// blackout windows.
-//
-// No parameters: the blackout VALUES live on `Person.blackouts` because they
-// are per-person data, whereas this config is tenant-level policy. Enabling
-// this constraint switches enforcement on.
+// blackout windows. No parameters: the values live on `Person.blackouts` as
+// per-person data; this config is tenant-level policy that switches
+// enforcement on.
 message LecturerVeto {}
 
 // HARD. A Session is never placed during a blackout window of any Group
-// attending it.
-//
-// Exactly the shape of LecturerVeto one entity across: no parameters, because
-// the windows live on `Group.blackouts` as Group data while this config is
-// tenant-level policy, and enabling it switches enforcement on.
+// attending it. Exactly the shape of LecturerVeto one entity across.
 //
 // "Attending it" resolves DOWNWARD through the hierarchy — a Group's blackout
-// binds that Group and its descendants, never its ancestors. `Group.blackouts`
-// carries the full reasoning and the failure the direction prevents.
+// binds that Group and its descendants, never its ancestors.
 message GroupVeto {}
 
-// SOFT. A Group should not be asked to be on campus and online on the same day.
+// SOFT. A Group should not be asked to be on campus and online on the same
+// day.
 //
-// WAS HARD, and the reclassification is the reason it reads oddly next to the
-// other members of the `oneof`: the message is empty because it takes no
-// parameters, but its `ConstraintConfig.weight` is now meaningful where before
-// it was ignored. A peer still sending weight 0 gets "count it, do not steer",
-// which is what every soft type does with a zero weight.
-//
-// The solver used to eliminate a mixing placement in `is_free`; it now prices
-// one on the objective, so a run may return a schedule that mixes when every
-// alternative cost more. Such a day is reported in the objective breakdown, NOT
+// WAS HARD — the solver used to eliminate a mixing placement in `is_free`; it
+// now prices one on the objective, so a run may return a schedule that mixes
+// when every alternative costs more. Reported in the objective breakdown, NOT
 // as a hard violation.
 message OnlineOnsiteSameDay {
-  // FIELD 1 IS RESERVED AND UNUSED — nothing is missing here.
-  //
-  // The message is deliberately empty: this type carries no parameters, and its
-  // penalty weight rides on `ConstraintConfig.weight` like every other soft
-  // type's. Field 1 is claimed now so that adding per-instance tuning later
-  // ("penalise mixing more for first-years") is an ordinary field addition
-  // rather than a publish cycle spent only on reserving the slot.
-  //
-  // Reserving a number a peer has never seen is not a breaking change: no
-  // encoder has ever emitted field 1 for this message, so no decoder can be
-  // holding data in it.
+  // FIELD 1 IS RESERVED AND UNUSED — nothing is missing here. The message is
+  // deliberately empty: this type carries no parameters, and its penalty
+  // weight rides on `ConstraintConfig.weight`. Field 1 is claimed now so a
+  // future per-instance tuning knob is an ordinary field addition.
   reserved 1;
 }
 
 // HARD. At most `max_ratio` of a Group's Sessions may be online.
 // (Was a hardcoded 30% in the TimeCraft prototype; now a parameter.)
 message MaxOnlineShare {
-  // 0.0 .. 1.0
-  double max_ratio = 1;
+  double max_ratio = 1; // 0.0 .. 1.0
 
   ShareWindow window = 2;
 }
@@ -217,115 +187,74 @@ enum ShareWindow {
 // Soft types
 // ---------------------------------------------------------------------------
 
-// SOFT. Penalize Sessions in the first block of a day.
-// "First block" resolves against the tenant's TimeGrid, never a fixed index.
+// SOFT. Penalize Sessions in the first block of a day, resolved against the
+// tenant's TimeGrid, never a fixed index.
 //
-// DEPRECATED: superseded by MinimizeBlockUsage, which expresses this as
-// `first = true` alongside arbitrary block positions. Retained because removing
-// a field is a wire-breaking change and `buf breaking` rejects it; senders
-// should emit MinimizeBlockUsage instead.
+// DEPRECATED: superseded by MinimizeBlockUsage (`first = true`). Retained
+// because removing a field is wire-breaking; senders should emit
+// MinimizeBlockUsage instead.
 message MinimizeFirstBlock {
   option deprecated = true;
 }
 
-// SOFT. Penalize Sessions in the last block of a day.
-//
-// Generalizes the prototype's "third block": with a per-tenant
-// `blocks_per_day`, the last block is not fixed at index 2.
+// SOFT. Penalize Sessions in the last block of a day. Generalizes the
+// prototype's fixed "third block" via a per-tenant `blocks_per_day`.
 //
 // DEPRECATED: superseded by MinimizeBlockUsage (`last = true`). See above.
 message MinimizeLastBlock {
   option deprecated = true;
 }
 
-// SOFT. Penalize Sessions in the listed block positions.
+// SOFT. Penalize Sessions in the listed block positions. Supersedes
+// MinimizeFirstBlock/MinimizeLastBlock, and does for the BLOCK axis what
+// MinimizeDayUsage does for the day axis.
 //
-// Supersedes MinimizeFirstBlock and MinimizeLastBlock, and does for the BLOCK
-// axis what MinimizeDayUsage did for the day axis: the prototype's hardcoded
-// positions become a tenant-configured list.
+// WHY BOTH A LIST AND TWO FLAGS: "first"/"last" are RELATIVE to
+// `TimeGrid.blocks_per_day`; an index is ABSOLUTE. A school that extends its
+// day still avoids "the last block" if the rule reads `last = true`, which an
+// absolute index alone could not express across a grid resize.
 //
-// WHY BOTH A LIST AND TWO FLAGS, rather than indices alone.
-//
-// "First" and "last" are RELATIVE to `TimeGrid.blocks_per_day`; an index is
-// ABSOLUTE. A school on 6 blocks that configures "avoid block 5" and later
-// extends the day to 8 blocks still avoids block 5 — now mid-afternoon —
-// though nobody edited the rule. `last = true` keeps meaning the last block.
-// Absolute indices alone would therefore LOSE an intent the two deprecated
-// messages could express, so the flags are not redundancy; they are the part
-// that survives a grid resize.
-//
-// An index at or beyond `blocks_per_day` is inert, not an error: the app
-// permits a grid to shrink under its configuration, and a constraint that
-// referenced a block which no longer exists must not fail a whole run.
+// An index at or beyond `blocks_per_day` is inert, not an error: a grid may
+// shrink under the tenant's own configuration.
 message MinimizeBlockUsage {
   // 0-based block indices to penalize. May be empty when only the flags apply.
   repeated uint32 blocks = 1;
 
-  // Penalize the day's first block, whichever index that currently is.
-  bool first = 2;
-
-  // Penalize the day's last block, whichever index that currently is.
-  bool last = 3;
+  bool first = 2; // penalize the day's first block, whichever index that currently is
+  bool last  = 3; // penalize the day's last block, whichever index that currently is
 }
 
-// SOFT. Penalize Sessions on the listed weekdays.
-//
-// Generalizes the prototype's hardcoded "minimize Saturday" (`timeslot > 14`).
-// With tenant-configured `TimeGrid.active_days`, Saturday is not structurally
-// special — a tenant may not have it active at all, or may want to deprioritize
-// a different day.
+// SOFT. Penalize Sessions on the listed weekdays. Generalizes the prototype's
+// hardcoded "minimize Saturday" via tenant-configured `TimeGrid.active_days`.
 message MinimizeDayUsage {
-  // ISO weekday, 1 = Monday .. 7 = Sunday.
-  repeated uint32 days = 1;
+  repeated uint32 days = 1; // ISO weekday, 1 = Monday .. 7 = Sunday
 }
 
-// SOFT. Steer room choice by `Room.rank`, which is ordered HIGHER = more
-// premium/scarce.
-//
-// The threshold names the boundary; `invert` names which side of it is
-// penalized. Both directions are real policies: an institution may want its
-// best halls kept free for events (the default), or may want them USED for
-// teaching rather than sitting empty.
-//
-// One message with a direction flag rather than two types, for the same reason
-// MinimizeBlockUsage replaced MinimizeFirstBlock/MinimizeLastBlock: they are two
-// directions of one axis over one field. Two types could also both be enabled at
-// once, penalizing every room from both ends — a contradiction nothing could
-// prevent, since each type carries its own instances.
+// SOFT. Steer room choice by `Room.rank` (HIGHER = more premium/scarce).
+// `invert` names which side of `rank_threshold` is penalized — both
+// directions are real policies (keep the best halls free for events, or
+// force them into use). One message with a direction flag rather than two
+// types, since two types could both be enabled at once and contradict each
+// other with nothing to prevent it.
 message MinimizeRoomRank {
   uint32 rank_threshold = 1;
 
   // false (default) — penalize `rank >= rank_threshold`: spare the best rooms.
   // true            — penalize `rank <= rank_threshold`: prefer the best rooms.
-  //
-  // Added in 0.5.0. Absent decodes to false, which is the behaviour every
-  // peer already had, so an old client's messages keep their meaning.
+  // Added in 0.5.0; absent decodes to false, unchanged from every prior peer.
   bool invert = 2;
 }
 
 // SOFT. Penalize Sessions falling in a week whose `WeekKind` is EXAM.
-//
-// Resolves against the structured Academic Calendar. The prototype's
+// Resolves against the structured Academic Calendar — the prototype's
 // `weeks[-exam_weeks:]` slicing must not be reproduced.
 message MinimizeExamWeek {
-  // false (default) — today's only behavior, unchanged: penalize placing an
-  // ordinary Session in an EXAM week, keeping regular lessons out of it.
-  // true            — invert the direction: penalize NOT placing in an EXAM
-  // week, so an exam-kind Session is pushed toward the exam period instead of
-  // away from it.
+  // false (default) — penalize placing an ordinary Session in an EXAM week.
+  // true            — invert: penalize NOT placing in an EXAM week, pushing
+  // an exam-kind Session toward the exam period instead of away from it. Same
+  // one-flag-not-two-types reasoning as `MinimizeRoomRank.invert`.
   //
-  // One message with a direction flag, not a second type — the same
-  // reasoning `MinimizeRoomRank.invert` and `MinimizeBlockUsage` (superseding
-  // `MinimizeFirstBlock`/`MinimizeLastBlock`) already established for this
-  // schema: two separate types could both be enabled at once and penalize
-  // every placement from both ends, a contradiction nothing could prevent
-  // since each type carries its own instances.
-  //
-  // Added absent from any peer's prior use of this message (it was empty), so
-  // absent decodes to false — every existing sender's meaning is unchanged.
-  //
-  // PROTO ONLY. The solver does not yet read this field; `invert` still
-  // resolves to the pre-existing (non-inverted) behavior everywhere.
+  // PROTO ONLY. The solver does not yet read this field.
   bool invert = 1;
 }
 
@@ -333,41 +262,24 @@ message MinimizeExamWeek {
 message MinimizeOnline {}
 
 // SOFT. Reward placements landing in a Person's stated preferred days/blocks.
-//
-// The VALUES live on Person.preferred; this message is the tenant-level switch
-// and, via Constraint.weight, how much the tenant cares. Same architecture as
-// LecturerVeto, one severity down — the per-person data is not duplicated into
-// the constraint, so a tenant enabling this rule does not restate anybody's
-// preferences.
-//
-// A per-person weight override rides on Person.preferred.weight_multiplier
-// rather than here, because Constraint carries ONE weight and there is no
-// person axis to scope a constraint instance by.
+// The VALUES live on Person.preferred; this message is the tenant-level
+// switch and, via Constraint.weight, how much the tenant cares — same
+// architecture as LecturerVeto. A per-person weight override rides on
+// Person.preferred.weight_multiplier instead, since Constraint carries ONE
+// weight and there is no person axis to scope an instance by.
 message PersonPreferenceFit {
-  // Which role_tags' preferences are counted. Empty = lecturers only, which is
-  // the intended default: a Session's attendee set includes every member of
-  // every attached Group, so counting all of them would let a large cohort's
-  // aggregate preference outweigh the person actually teaching.
+  // Which role_tags' preferences are counted. Empty = lecturers only — a
+  // Session's attendee set includes every Group member, so counting all of
+  // them would let a large cohort's aggregate preference outweigh the person
+  // actually teaching.
   repeated string roles = 1;
 }
 
 // SOFT. Minimize idle blocks between an attending Group's or Person's first
-// and last Session of a day.
-//
-// Built — see the solver repo's ADR/CLAUDE.md.
-//
-// Genuinely a new shape, not a fit for any of the solver's four ORIGINAL
-// constraint shapes (see the solver repo's CLAUDE.md): it needs the WHOLE of
-// one day's session set for one Group or Person at once, and the quantity is
-// a continuous gap COUNT rather than a per-placement cost, a boolean filter,
-// or a cardinality ratio. Closest structurally to `OnlineOnsiteSameDay`, which
-// is also day-granularity and reads what else is already placed that day
-// rather than the candidate alone — but that type accumulates a boolean per
-// `(group, day)` cell, not a gap count, so it is a relative rather than an
-// exact precedent.
+// and last Session of a day. Needs the WHOLE of one day's session set for one
+// Group or Person at once, not a single placement's slot.
 message Compactness {
-  // Empty = both axes counted independently. Restrict to just one if a tenant
-  // cares about, say, Group compactness but not Person compactness.
+  // Empty = both axes counted independently.
   repeated CompactnessScope scope = 1;
 }
 
@@ -378,53 +290,24 @@ enum CompactnessScope {
 }
 
 // SOFT. Once a lecturer holds one Session of a recurring Offering, they
-// should hold the rest of it too — not switch week to week.
-//
-// PROTO ONLY — UNIMPLEMENTED, and unlike `Compactness` this one has a
-// PREREQUISITE that does not exist yet either: genuine lecturer-POOL
-// selection. v1 only accepts the degenerate case
-// `candidate_lecturer_ids.len() == required_lecturer_count` (see
-// `ConvertError::LecturerPoolUnsupported` in the solver repo) — there is no
-// CHOICE across an Offering's Sessions for this type to be consistent about
-// until that lands. Shipping the field now would let it sit configured and
-// silently inert once the prerequisite is missing, which is exactly the
-// `lecturer_veto`-shaped failure this schema's other staged types are
-// written to avoid — so `applies_to_kinds`/`enabled` on this instance are
-// meaningless until pool selection exists, and a solver pin that reads this
-// message must refuse it with the same discipline `PersonPreferenceFit` used
-// before its evaluator landed, not silently ignore it.
-//
-// Aggregate over an entire Offering's Sessions across the WHOLE TERM — a
-// second new shape, keyed by Offering rather than by Group and unbounded by
-// day or window, unlike every existing aggregate type.
+// should hold the rest of it too — not switch week to week. Built: an
+// aggregate over an entire Offering's Sessions across the WHOLE TERM, keyed
+// by Offering rather than Group, priced against `max(0, distinct_lecturers -
+// required_lecturer_count)`. Only ever fires for an Offering with a genuine
+// lecturer pool (`candidate_lecturer_ids.len() > required_lecturer_count`) —
+// see solver ADR-0026.
 message LecturerConsistency {}
 
-// SOFT. Prices an Offering tagged `SCHEDULING_PATTERN_DISTRIBUTED` (see
-// `Offering.scheduling_pattern`) for spreading its Sessions across more than
-// one weekly `(weekday, block)` slot. Cost: the number of DISTINCT weekly
-// slots the Offering's currently-placed Sessions occupy, minus one — zero
-// when every Session shares one slot ("Mondays at 10, every week"), and
-// growing with each additional distinct slot used, regardless of how many
-// Sessions land in each. An Offering tagged BLOCK or UNSPECIFIED is untouched
-// by this instance; see `BlockPatternAdherence` for the other pattern.
-//
-// Built — see the solver repo's ADR/CLAUDE.md. Empty message: the only
-// parameter this type needs — which Offerings it prices — comes from reading
-// `Offering.scheduling_pattern` per Offering, not from anything configured
-// here.
+// SOFT. Prices an Offering tagged `SCHEDULING_PATTERN_DISTRIBUTED` for
+// spreading its Sessions across more than one weekly `(weekday, block)` slot.
+// Cost: distinct weekly slots occupied, minus one. An Offering tagged BLOCK
+// or UNSPECIFIED is untouched.
 message DistributedPatternAdherence {}
 
-// SOFT. Prices an Offering tagged `SCHEDULING_PATTERN_BLOCK` for spreading
-// its Sessions across a wide span of the Term instead of a short window.
-// Cost: idle WEEKS between the Offering's first and last week with any
-// placed Session — the exact `Compactness` gap-counting shape, but at week
-// granularity and scoped by Offering rather than by Group or Person. Zero
-// when every Session falls in one contiguous run of weeks. An Offering
-// tagged DISTRIBUTED or UNSPECIFIED is untouched by this instance; see
-// `DistributedPatternAdherence` for the other pattern.
-//
-// Built — see the solver repo's ADR/CLAUDE.md. Empty for the same reason
-// `DistributedPatternAdherence` is.
+// SOFT. Prices an Offering tagged `SCHEDULING_PATTERN_BLOCK` for spreading its
+// Sessions across a wide span of the Term instead of a short window. Cost:
+// idle WEEKS between the Offering's first and last placed week. An Offering
+// tagged DISTRIBUTED or UNSPECIFIED is untouched.
 message BlockPatternAdherence {}
 
 // ---------------------------------------------------------------------------
@@ -432,21 +315,11 @@ message BlockPatternAdherence {}
 // ---------------------------------------------------------------------------
 
 // SOFT. Penalize seating an Offering in a Room much larger than its
-// `min_capacity` — reward a good room-size fit. Same shape as
-// `MinimizeRoomRank`: `Room.capacity` and `Offering.min_capacity` are both
-// static per (room, offering), so this is a fully precomputable
-// `(profile, slot, room)` unary cost.
-//
-// Severity is graded by RATIO (`capacity / min_capacity`), not raw seat-count
-// distance — a 200-seat room for a 20-person Offering (10x) is a far worse
-// fit than the same room for a 180-person one (1.1x), which a raw distance
-// would score identically. An Offering with `min_capacity == 0` is never
-// penalized by this type: a ratio against zero is meaningless, and no
-// capacity was ever asked for.
+// `min_capacity`. Severity is graded by RATIO (`capacity / min_capacity`), not
+// raw seat-count distance. `min_capacity == 0` is never penalized: a ratio
+// against zero is meaningless.
 message MinimizeCapacityWaste {
   // Ratio at or above which a Room counts as wasteful for this Offering.
-  // 1.0 penalizes (to some degree) any Room larger than `min_capacity`; a
-  // tenant wanting to tolerate modest slack sets this above 1.0.
   double waste_ratio_threshold = 1;
 }
 
@@ -454,35 +327,22 @@ message MinimizeCapacityWaste {
 // `max_locations_per_day` distinct, non-empty `Room.location` values —
 // reduces cross-campus walking between back-to-back Sessions.
 //
-// `Room.location` is opaque free text; no format is imposed here. A tenant
-// is responsible for consistent values (e.g. always "Building A", never
-// mixing in "Bldg A") — two rooms that differ only by that inconsistency
-// will false-positive as different locations.
-//
-// Same new-shape family as `Compactness`: needs the whole of one day's
-// Session set for one Group or Person at once, not a single placement's slot.
+// `Room.location` is opaque free text; a tenant is responsible for consistent
+// values.
 message MinimizeLocationChange {
-  // Empty = both axes counted independently, same convention as
-  // `Compactness.scope`.
-  repeated CompactnessScope scope = 1;
+  repeated CompactnessScope scope = 1; // empty = both axes independently
 
   // A day counts as a violation once it touches MORE than this many distinct
-  // locations. 1 = any second location already violates; a tenant tolerating
-  // exactly two buildings sets this to 2.
+  // locations.
   uint32 max_locations_per_day = 2;
 }
 
 // SOFT. Caps how many blocks in a row a Group or Person can be scheduled
 // without a break — the mirror image of `Compactness`, which minimizes the
-// GAPS inside a day instead of the DENSITY of a run. The two pull in
-// OPPOSITE directions; a tenant may enable both, at different weights.
-//
-// Same new-shape family as `Compactness` (whole-day session set, not a
-// single placement).
+// GAPS inside a day instead of the DENSITY of a run. A tenant may enable both,
+// at different weights.
 message MaxConsecutiveBlocks {
-  // Empty = both axes counted independently, same convention as
-  // `Compactness.scope`.
-  repeated CompactnessScope scope = 1;
+  repeated CompactnessScope scope = 1; // empty = both axes independently
 
   // A run longer than this many consecutive occupied blocks is penalized,
   // per block past the cap.
@@ -490,193 +350,132 @@ message MaxConsecutiveBlocks {
 }
 
 // SOFT. Caps how many Sessions (or blocks) a lecturer teaches in one week;
-// priced once the cap is exceeded rather than refused — a hard cap on a
-// count that only becomes fully known as placements accumulate risks the
-// same dead-end-construction problem ADR-0025 records for `MaxOnlineShare`.
-//
-// Aggregate-over-week, keyed by Person (lecturer) rather than by Group — a
-// count against an allowance, close cousin of `MaxOnlineShare`'s shape but
-// without a ratio or moving denominator: just a raw count.
+// priced once the cap is exceeded rather than refused (a hard cap on a count
+// that only becomes fully known as placements accumulate risks the same
+// dead-end-construction problem ADR-0025 records for `MaxOnlineShare`).
 //
 // Distinct from `LecturerVeto` (blocks specific time WINDOWS) and
-// `LecturerConsistency` (staged, unimplemented — same lecturer across an
-// Offering's Sessions): neither caps total weekly load.
+// `LecturerConsistency` (same lecturer across an Offering's Sessions):
+// neither caps total weekly load.
 message MaxWeeklyTeachingLoad {
-  // Count SESSIONS if false, BLOCKS if true — a 2-block Session counts as 2
-  // toward the cap only when this is true.
+  // Count SESSIONS if false, BLOCKS if true.
   bool count_blocks = 1;
 
   uint32 max_per_week = 2;
 }
 
 // SOFT. Penalizes a Group sitting two or more exam-kind Sessions on the same
-// day — spreads a Group's exams out rather than clustering them on one day.
-// Distinct from `MinimizeExamWeek`, which is about lessons avoiding (or,
-// with its `invert` flag, exam-kind Sessions seeking) the exam period AS A
-// WHOLE; this is a narrower complaint about exams that already fall inside
-// it not landing on the same day.
-//
-// Which Sessions count as exam-kind is `ConstraintConfig.applies_to_kinds`
-// on the enclosing config — the same mechanism every kind-scoped type
-// already uses, not a new field here. See `ExamSpacingWindow` for the
-// generalized "within N days" sibling.
+// day. Distinct from `MinimizeExamWeek`, which is about lessons avoiding (or
+// seeking) the exam period AS A WHOLE. Which Sessions count as exam-kind is
+// `ConstraintConfig.applies_to_kinds` on the enclosing config. See
+// `ExamSpacingWindow` for the "within N days" sibling.
 message ExamSpacingSameDay {}
 
 // SOFT. Penalizes a Group sitting two exam-kind Sessions within
-// `min_days_between` calendar days of each other — the generalized sibling
-// of `ExamSpacingSameDay` for a tenant that wants more than one clear day
-// between exams.
-//
-// A separate type rather than a parameter on `ExamSpacingSameDay`: a tenant
-// wanting the simple same-day rule pays no window-tracking cost, and a
-// tenant enabling both at once is a choice this schema does not need to
-// prevent.
+// `min_days_between` calendar days of each other. A separate type rather than
+// a parameter on `ExamSpacingSameDay`, so the simple same-day rule pays no
+// window-tracking cost.
 message ExamSpacingWindow {
-  // Minimum days that must separate two exam-kind Sessions of one Group.
-  // 1 asks the same question `ExamSpacingSameDay` does (no same-day pair);
-  // above 1 additionally spaces out near neighbors.
+  // 1 asks the same question `ExamSpacingSameDay` does; above 1 additionally
+  // spaces out near neighbors.
   uint32 min_days_between = 1;
 }
 
 // HARD. A tenant-wide reserved window (lunch, assembly, chapel) where no
 // Session of the applying `kind`s may ever be placed — independent of any
-// Person's or Group's own data.
-//
-// The FIRST hard type whose values are pure tenant policy carried directly
-// on the constraint config, rather than living on a Person/Group and merely
-// switched on here (contrast `LecturerVeto`/`GroupVeto`).
-//
-// Monotone-safe like the four structural types: a protected slot is never
-// freed by placing something elsewhere, so unlike `MaxOnlineShare` there is
-// no dead-end-construction problem — it is enforced in `is_free`, not priced.
+// Person's or Group's own data. Enforced in `is_free`, not priced: a
+// protected slot is never freed by placing something elsewhere, so there is
+// no dead-end-construction problem the way `MaxOnlineShare` has.
 message ProtectedBlock {
   repeated BlockedWindow windows = 1;
 }
 
 // A recurring-weekly or one-off blocked window — the same day/block/week
 // vocabulary as `model.proto`'s `Unavailability`, kept as its own message
-// here rather than imported: `constraints.proto` has no reason to depend on
-// `model.proto`, and `model.proto` already imports `constraints.proto`, so
-// the reverse import would be circular. Same "empty axis = every value on
-// that axis" convention `Unavailability` uses.
+// rather than imported (constraints.proto must not depend on model.proto,
+// which already imports constraints.proto). Same "empty axis = every value"
+// convention.
 message BlockedWindow {
   repeated uint32 days   = 1;  // ISO weekday. Empty = every day.
   repeated uint32 blocks = 2;  // 0-based within day. Empty = every block.
 
-  // Index into the Academic Calendar's weeks. Empty = every week — the
-  // recurring-weekly case. Non-empty = a one-off block, only in the named
-  // week(s).
+  // Index into the Academic Calendar's weeks. Empty = every week (recurring).
+  // Non-empty = a one-off block, only in the named week(s).
   repeated uint32 weeks = 3;
 }
 
-// SOFT. An Offering's recurring Sessions should reuse the same Room each
-// week rather than bouncing around — mirrors `LecturerConsistency` but for
-// the Room axis. Unlike `LecturerConsistency`, buildable today: Room
-// assignment is not gated behind an unimplemented pool-selection feature.
+// SOFT. An Offering's recurring Sessions should reuse the same Room each week
+// rather than bouncing around — mirrors `LecturerConsistency` for the Room
+// axis, but with no prerequisite blocker (Room assignment is not gated behind
+// pool selection).
 //
-// "Usual" Room is the Offering's MODAL (most-used) Room among its currently
-// placed Sessions — recomputed as placements change, not fixed to whichever
-// Session happened to be placed first. Every Session sitting in a Room other
-// than the current mode is charged the constraint's weight once.
-//
-// Aggregate over an entire Offering's Sessions across the WHOLE TERM, same
-// new shape `LecturerConsistency` is staged for — keyed by Offering rather
-// than Group and unbounded by day or window.
+// "Usual" Room is the Offering's MODAL Room among its currently placed
+// Sessions — recomputed as placements change. Every Session in a different
+// Room is charged the constraint's weight once.
 message RoomConsistency {}
 
 // SOFT. Caps how many DISTINCT Rooms a Group uses across a whole WEEK — the
 // "home room" concept: mostly one Room, with an occasional special-purpose
-// Room as the exception rather than the rule. Plain distinct count, not
-// weighted by how often the Group returns to its most-used Room.
-//
-// Distinct from `MinimizeLocationChange` (building-hopping WITHIN a single
-// day): this is about total Room variety across the whole week, satisfiable
-// even while never crossing a building.
-//
-// Week-granularity aggregate over a Group.
+// exception. Distinct from `MinimizeLocationChange` (building-hopping WITHIN
+// a day): this is total Room variety across the week.
 message MinimizeRoomChurn {
-  // A week touching more than this many distinct Rooms is penalized, per
-  // Room past the cap.
+  // A week touching more than this many distinct Rooms is penalized, per Room
+  // past the cap.
   uint32 max_rooms_per_week = 1;
 }
 
 // SOFT. Caps the elapsed time from a Group's or Person's first to last
-// Session in a day — distinct from both `Compactness` (penalizes the GAPS
-// inside the span) and `MaxConsecutiveBlocks` (penalizes DENSITY): a day can
-// have zero gaps and low density and still run far too long if the
-// bracketing Sessions are simply far apart.
-//
-// Same new-shape family as the other two: needs the whole of a Group's or
-// Person's day (first slot, last slot), not a single placement.
+// Session in a day — distinct from `Compactness` (GAPS inside the span) and
+// `MaxConsecutiveBlocks` (DENSITY): a day can have zero gaps and low density
+// and still run far too long if the bracketing Sessions are simply far apart.
 message MaxDailySpan {
-  // Empty = both axes counted independently, same convention as
-  // `Compactness.scope`.
-  repeated CompactnessScope scope = 1;
+  repeated CompactnessScope scope = 1; // empty = both axes independently
 
   // Blocks past which a day's first-to-last span is penalized, per block
   // past the cap.
   uint32 max_span_blocks = 2;
 }
 
-// SOFT. Spreads a Group's Sessions evenly across its active days, rather
-// than clustering on some and leaving others empty. Measured as the VARIANCE
-// of per-day Session counts across the tenant's active days, for one
-// (Group, week) at a time — a property of the Group's whole week, distinct
-// from `MinimizeDayUsage`, which targets specific NAMED weekdays independent
-// of what else that Group has that week.
-//
-// Week-granularity aggregate over a Group.
+// SOFT. Spreads a Group's Sessions evenly across its active days rather than
+// clustering. Measured as the VARIANCE of per-day Session counts across
+// active days, for one (Group, week) at a time — distinct from
+// `MinimizeDayUsage`, which targets specific NAMED weekdays regardless of
+// what else that Group has that week.
 message MinimizeWeekdayImbalance {
-  // FIELD 1 RESERVED — nothing is missing here.
-  //
-  // The message is empty: variance is read straight off `TimeGrid.
-  // active_days`, no tenant parameter needed. Reserved so a future tuning
-  // knob is an ordinary field addition rather than a publish cycle spent
-  // only reserving the slot.
+  // FIELD 1 RESERVED — variance is read straight off `TimeGrid.active_days`,
+  // no tenant parameter needed. Reserved for a future tuning knob.
   reserved 1;
 }
 
 // SOFT. Requires a minimum gap between two bookings of the SAME Room, even
 // when the slot grid would otherwise allow them back-to-back — labs needing
-// equipment reset, or any Room needing setup/teardown time between uses.
-//
-// Genuinely new shape: pairwise like the four structural double-booking
-// types, but keyed by a configurable BUFFER DISTANCE rather than exact-slot
-// overlap. Priced rather than refused: a tenant enabling this without a
-// genuine cleanup need risks making an instance needlessly harder to solve,
-// which SOFT tolerates and HARD would not.
-//
-// Never crosses a week boundary, mirroring how every existing type treats a
-// week as bounded.
+// equipment reset, or setup/teardown time. Priced rather than refused, since
+// HARD would risk making an instance needlessly harder to solve. Never
+// crosses a week boundary.
 message RoomTurnaroundBuffer {
   // Minimum blocks that must separate two bookings of the same Room.
   uint32 buffer_blocks = 1;
 }
 
 // HARD. Caps how many Sessions can be online AT THE SAME SLOT, tenant-wide —
-// independent of Group or kind. Models a real platform limit (e.g. a
-// Zoom/Teams license seat count), distinct from `MaxOnlineShare`'s per-Group
-// RATIO over a time window.
+// models a real platform limit (e.g. a Zoom/Teams license seat count),
+// distinct from `MaxOnlineShare`'s per-Group RATIO over a time window. CAN be
+// a filter (unlike MaxOnlineShare): the count at one slot has no
+// moving-denominator problem, so it is enforced in `is_free` like
+// `RoomDoubleBooking`.
 //
-// Unlike `MaxOnlineShare`, this CAN be a filter: the count at one slot is
-// known at construction time with no moving-denominator problem, so it is
-// enforced in `is_free` like `RoomDoubleBooking` rather than priced.
-//
-// The cap lives here, not on `Room.capacity` — a virtual Room has no
-// capacity concept today (ADR-0022), and this constraint models a
-// platform-wide seat limit, not any one Room's own property.
+// The cap lives here, not on `Room.capacity` — a virtual Room has no capacity
+// concept (ADR-0022), and this models a platform-wide seat limit, not a
+// Room's own property.
 message MaxConcurrentOnlineSessions {
   uint32 max_concurrent = 1;
 }
 
 // HARD (validation-shaped, not a preference). Cross-checks the assigned
 // Room's capacity against the actual attending Groups' `Group.size`, rather
-// than trusting `Offering.min_capacity` alone — a safety net against stale
-// or wrong input data, closer in spirit to the existing structural checks
-// than to anything in the soft catalogue.
-//
-// No parameters: the values (`Group.size`, `Room.capacity`) already exist on
-// the wire; this only switches the cross-check on.
+// than trusting `Offering.min_capacity` alone — a safety net against stale or
+// wrong input data. No parameters: the values already exist on the wire; this
+// only switches the cross-check on.
 message GroupSizeFitsRoom {}
 
 // ---------------------------------------------------------------------------
@@ -685,19 +484,16 @@ message GroupSizeFitsRoom {}
 // A whole family of requested rules — Precedence, DifferentTime, SameTime/
 // SameDays/SameStart, MeetTogether/CanShareRoom, and the "N hours between"
 // variants — needs a pointer no `ConstraintConfig` field can hold: a
-// reference to SPECIFIC Offerings, not a category. `applies_to_kinds` names
-// a kind; these rules name Offering `db-lecture` and Offering `db-lab`.
+// reference to SPECIFIC Offerings, not a category. `applies_to_kinds` names a
+// kind; these rules name Offering `db-lecture` and Offering `db-lab`.
 //
 // One mechanism for all of them: an ORDERED set of Offering references, a
 // relation type, and that type's own parameters. Only the evaluator differs
-// between relation types — the reference, its ordering and its dangling-id
-// semantics are built once here rather than once per type. See the solver
-// repo's ADR-0028 for the full reasoning, including why this is a NEW
-// top-level message rather than another `ConstraintConfig.params` variant
-// (a relation's parameters ARE the Offering-id list; kind-scoping has
-// nothing to say about it) and why `offering_ids` is ordered even though
-// only a few future relation types (Precedence, Next Day, Two Days After)
-// ever read that order.
+// between relation types. See solver ADR-0028 for the full reasoning,
+// including why this is a NEW top-level message rather than another
+// `ConstraintConfig.params` variant, and why `offering_ids` is ordered even
+// though only a few future relation types (Precedence, Next Day, Two Days
+// After) ever read that order.
 // ---------------------------------------------------------------------------
 
 message OfferingRelation {
@@ -705,18 +501,16 @@ message OfferingRelation {
 
   bool enabled = 2;
 
-  // Meaningful for SOFT relation types only; ignored for HARD types — same
-  // convention as `ConstraintConfig.weight`.
+  // Meaningful for SOFT relation types only; ignored for HARD types.
   double weight = 3;
 
   // Which Offerings this relation relates, in the tenant's stated order.
-  // Symmetric types (`DifferentTime`) ignore the order; a future
-  // order-sensitive type (Precedence) reads position 0 as "first".
+  // Symmetric types (`DifferentTime`) ignore the order.
   //
-  // A dangling id here is a structural error, not a feasibility one — see
-  // `ConvertError::UnknownOffering` in the solver repo — because a relation
-  // silently missing one of its own operands would enforce a DIFFERENT rule
-  // than the one configured, not a looser version of the same one.
+  // A dangling id here is a structural error, not a feasibility one (see
+  // `ConvertError::UnknownOffering`): a relation silently missing one of its
+  // own operands would enforce a DIFFERENT rule than the one configured, not
+  // a looser version of the same one.
   repeated string offering_ids = 4;
 
   oneof params {
@@ -724,11 +518,9 @@ message OfferingRelation {
   }
 }
 
-// HARD. No two members of the enclosing relation may ever share a slot —
-// the same shape as `RoomDoubleBooking`, keyed by relation membership
-// instead of by Room. Symmetric: `OfferingRelation.offering_ids`' order is
-// irrelevant to this type.
-//
+// HARD. No two members of the enclosing relation may ever share a slot — the
+// same shape as `RoomDoubleBooking`, keyed by relation membership instead of
+// by Room. Symmetric: `OfferingRelation.offering_ids`' order is irrelevant.
 // No parameters: which Offerings are related is entirely the enclosing
-// `OfferingRelation.offering_ids`, not anything carried here.
+// `OfferingRelation.offering_ids`.
 message DifferentTime {}
