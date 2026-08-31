@@ -118,6 +118,8 @@ message ConstraintConfig {
     MaxDays                      max_days                        = 54;
     MaxConsecutiveDays           max_consecutive_days            = 55;
     Daybreak                     daybreak                        = 56;
+
+    MinimizeSpecializedRoomUse   minimize_specialized_room_use   = 57;
   }
 }
 
@@ -340,6 +342,33 @@ message MinimizeCapacityWaste {
   // Ratio at or above which a Room counts as wasteful for this Offering.
   double waste_ratio_threshold = 1;
 }
+
+// SOFT. Discourage occupying a Room marked `Room.is_specialized` with
+// teaching that does not need what makes it specialized — so a lab, computer
+// room or workshop stays free for the Sessions that genuinely require it.
+//
+// EXEMPT BY REQUIREMENT, not by configuration. A placement costs nothing when
+// the Offering's `required_room_features` / `room_feature_requirements`
+// intersect that Room's `feature_tags`: the programming class in the computer
+// lab is exactly where it should be, and charging it would be noise on the
+// objective at best and would push it out of its only suitable Room at worst.
+// Only teaching that could have gone elsewhere is discouraged. This reads
+// data the tenant already maintains for room ELIGIBILITY, so it needs no
+// second list to keep in sync.
+//
+// NOT `MinimizeRoomRank`, deliberately, though both "keep certain rooms
+// free". `rank` is an ORDINAL desirability scale whose `invert` mode means
+// "prefer the premium rooms" — encoding a lab as high-rank would make that
+// policy pull Sessions INTO the lab, and would make "spare the lab but prefer
+// the auditorium" unrepresentable. Scarce-by-function and premium-by-
+// desirability are different axes, which is what earns a second type under
+// solver ADR-0024's one-type-per-axis rule.
+//
+// FLAT, charged at most ONCE per placement — the mark is a boolean, so there
+// is no gradient to grade, unlike `MinimizeCapacityWaste`'s ratio or
+// `MinimizeRoomRank`'s distance past its threshold. A Session occupying
+// several specialized Rooms at once still costs its weight once.
+message MinimizeSpecializedRoomUse {}
 
 // SOFT. Penalize a Group's or Person's day touching more than
 // `max_locations_per_day` distinct, non-empty `Room.location` values —

@@ -212,6 +212,22 @@ message Room {
   // the honest default for a single-building tenant, which never pays for
   // this field. Only `TravelTimeBetweenRooms` reads it.
   string site = 11;
+
+  // Scarce by FUNCTION: a lab, a computer room, a workshop — a Room that
+  // should stay free for the teaching that actually needs it, rather than
+  // being filled by teaching that could have gone anywhere.
+  //
+  // A SEPARATE axis from `rank`, not a shorthand for a high one. `rank` is
+  // ordinal desirability, and `MinimizeRoomRank.invert` reads it in the
+  // opposite direction ("prefer the premium rooms") — so encoding a lab as
+  // high-rank would make that policy pull Sessions INTO the lab, and would
+  // make "spare the lab but prefer the auditorium" unrepresentable. A room
+  // can legitimately be both premium and specialized, or either alone.
+  //
+  // Inert on its own: it costs nothing until a `MinimizeSpecializedRoomUse`
+  // constraint is configured, and even then only for Offerings that do NOT
+  // require any of this Room's `feature_tags`.
+  bool is_specialized = 12;
 }
 
 // One counted feature a Room supplies. See `Room.feature_quantities`.
