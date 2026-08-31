@@ -459,6 +459,61 @@ message SolveScope {
   // existing slots. Charged the same way. Zero (the default) asks the solver
   // to freely re-optimize, unchanged from before this field existed.
   double minimize_inscope_movement_weight = 5;
+
+  // Per-entity exceptions to the two weights above. Empty (the default)
+  // leaves both behaving exactly as they did before this field existed.
+  repeated MovementOverride movement_overrides = 6;
+}
+
+// One Person's or Group's own movement weight, REPLACING whichever of
+// `SolveScope.minimize_movement_weight` / `minimize_inscope_movement_weight`
+// would otherwise apply to a Session of theirs.
+//
+// The requirement is a repair-mode selector: mark some people or cohorts as
+// fine to move and others as "please don't unless nothing else resolves it".
+// Both fall out of one number — `weight: 0` is "movable, no extra cost" even
+// when the scope-wide weight is large, and a large weight is soft-unmovable.
+// Still SOFT, and distinct from a Session `lock`, which is a HARD exemption:
+// an override can never stop a Session being moved, only make it expensive.
+//
+// It belongs on `SolveScope` rather than on `Person`/`Group` because it is
+// per-RUN policy, not a property of the entity: the same lecturer is
+// protected in the repair that must not disturb their week and freely movable
+// in the full end-of-term rebuild. That is also why it is not a
+// `ConstraintConfig` — a constraint carries policy and has never named a
+// specific entity, which is the whole reason `OfferingRelation` is its own
+// message (solver ADR-0028).
+//
+// SCOPE, both axes:
+//
+//   * `person_id` covers Sessions this Person LECTURES, never ones they
+//     merely attend — the same decision `PersonPreferenceFit` records
+//     (ADR-0026), and for the same reason: an attendee set averages ~65
+//     people at benchmark scale, so an attendee reading would leave almost
+//     every Session in a real instance carrying some override. A student's
+//     protection is expressed through their Group.
+//   * `group_id` binds that Group AND its descendants — a protected
+//     programme protects its cohorts' Sessions — so a Session attached to
+//     `g` is covered by an override on `g` or on any ancestor of `g`. Same
+//     downward-binding direction as `Group.blackouts`/`GroupVeto`, and NOT
+//     the both-directions propagation double-booking uses (solver ADR-0027).
+//
+// When several overrides cover one Session — a protected lecturer teaching a
+// protected cohort, or two Groups in one ancestry chain — the LARGEST weight
+// wins. Order-independent (so it cannot depend on the order the app happens
+// to send them), and it never lets a broader "movable" silently defeat a
+// narrower protection.
+//
+// An unresolvable `person_id`/`group_id`, an unset `target`, or a negative
+// `weight` is a typed conversion error, not a skip: an override that silently
+// did not apply would report a run as respecting a protection it ignored.
+message MovementOverride {
+  oneof target {
+    string person_id = 1;
+    string group_id  = 2;
+  }
+
+  double weight = 3;
 }
 
 enum LockPolicy {

@@ -655,6 +655,7 @@ message OfferingRelation {
     SameDays      same_days      = 12;
     SameStart     same_start     = 13;
     MeetTogether  meet_together  = 14;
+    Precedence    precedence     = 15;
   }
 }
 
@@ -721,3 +722,56 @@ message SameStart {}
 // independently of the full package, and it would need its own answer to
 // what "sharing" means without SameTime/SameDays binding the pair together.
 message MeetTogether {}
+
+// ---------------------------------------------------------------------------
+// Precedence — a lab must follow its lecture. The FIRST relation type that
+// reads `OfferingRelation.offering_ids`' ORDER (ADR-0028 kept the set ordered
+// for exactly this): the members form a CHAIN, and the rule binds each
+// consecutive pair `(offering_ids[i], offering_ids[i+1])`.
+//
+// TERM-WIDE, ALL PAIRS: every placed Session of the predecessor must end
+// before every placed Session of the successor begins. This is the
+// block-teaching reading — all lectures finish before any lab starts — not a
+// per-week pairing, and NOT UniTime's "first meeting of the first class"
+// either. Both alternatives were considered and rejected: a per-week pairing
+// says nothing about a lab in week 2 preceding a lecture in week 3, and
+// first-meetings-only leaves every occurrence after the first unconstrained.
+//
+// Because "all pairs ordered" reduces to a single comparison — the
+// predecessor's LATEST end against the successor's EARLIEST start — that one
+// boundary is also where both parameters below are measured. There is exactly
+// one gap per consecutive member pair, not one per Session pair.
+//
+// HARD, but PRICED at `hard_penalty` rather than enforced as a candidate
+// filter, the same stance `SameTime`/`SameDays`/`SameStart` and
+// `MaxDays`/`MaxConsecutiveDays` take: the boundary depends on the extremes of
+// two Offerings' COMPLETE placed sets, which no mid-search moment has. A run
+// can therefore SUCCEED while reporting a `PrecedenceRelation` violation.
+//
+// BEST-EFFORT on the unplaced side: a member with no placed Session at all
+// imposes nothing on the boundaries it participates in — the same answer
+// `SameTime`'s per-week stance gives, and the one issue #37 required be
+// stated rather than left to throw or silently score zero.
+message Precedence {
+  // Wall-clock minutes required between the predecessor's last Session
+  // ENDING and the successor's first Session STARTING, resolved through the
+  // TimeGrid (block lengths, the default gap and every named break), never
+  // counted in blocks. 0 = back-to-back is fine, but the ordering itself
+  // still holds: the successor may not start before the predecessor ends.
+  //
+  // Use this for "the lab must be at least a day after the lecture"
+  // (`1440`); it is the same wall-clock notion `Daybreak.min_rest_minutes`
+  // and `TravelTimeBetweenRooms` already use.
+  uint32 min_gap_minutes = 1;
+
+  // Ceiling on the same boundary, in CALENDAR days: the successor's first
+  // Session may start at most this many days after the day of the
+  // predecessor's last. 0 = unbounded, which is the "same week or later,
+  // whenever" reading. Set to 7 for "within a week of the lecture".
+  //
+  // Calendar days, deliberately, not teaching days — a Friday-to-Monday
+  // boundary is 3 days here, not 1. A tenant stating "within 2 days" means
+  // the student's calendar, and counting teaching days would silently
+  // stretch that across every weekend and closure week.
+  uint32 max_days_between = 2;
+}
