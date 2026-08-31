@@ -77,6 +77,47 @@ message TimeGrid {
   // single institution-local time. Per-Person timezone must never reach
   // "same day" / "adjacent slot" logic.
   string institution_timezone = 5;
+
+  // The grid's UNNAMED default gap between every pair of consecutive blocks,
+  // in minutes. 0 = no default gap — today's behavior, unchanged. Mirrors the
+  // app's `BlockGrid.breakMinutes` (`shared/timeGrid.ts`).
+  //
+  // The solver reasons in block INDICES; a gap changes no adjacency there,
+  // which is why no earlier version of this message carried one. It exists
+  // now only so `MinimizeBreakSpanning` can price the wall-clock gap a
+  // multi-block Session's span crosses — nothing else reads it, and a
+  // constraint set with that type disabled is unaffected by its value.
+  uint32 default_gap_minutes = 6;
+
+  // Per-position overrides replacing `default_gap_minutes` at specific
+  // positions, optionally per weekday. See `TimeGridBreak`.
+  repeated TimeGridBreak breaks = 7;
+}
+
+// A named gap that replaces `TimeGrid.default_gap_minutes` at one position.
+// Mirrors the app's `TimeGridBreak` (`shared/timeGrid.ts`) field-for-field —
+// resolution precedence is day-specific → universal → grid default, resolved
+// PER POSITION: a Friday override at block 6 does not displace a universal
+// break at block 3. Only `MinimizeBreakSpanning` reads this.
+message TimeGridBreak {
+  // The gap FOLLOWS this 0-based block index.
+  uint32 after_block_index = 1;
+
+  uint32 duration_minutes = 2;
+
+  string label = 3;
+
+  // Absent = applies on every active day. A row naming a specific ISO
+  // weekday beats the universal one at the SAME `after_block_index` and
+  // only there.
+  //
+  // `optional` for REAL FIELD PRESENCE — the same reasoning `Preference.
+  // weight_multiplier` is `optional` for, though here 0 is not itself a
+  // valid ISO weekday (1 = Monday .. 7 = Sunday), so an unset field could
+  // not be confused with a real value either way; `optional` is kept so the
+  // wire shape states the "any day" case explicitly rather than leaning on
+  // a value no weekday will ever take.
+  optional uint32 day_of_week = 4;
 }
 
 // Addresses one block of the grid. A struct rather than a flat integer: a bare
@@ -165,6 +206,12 @@ message Room {
   // checks `feature_tags` membership alone. A feature named here SHOULD also
   // appear in `feature_tags`.
   repeated RoomFeatureQuantity feature_quantities = 10;
+
+  // Tenant-defined site/building tag, open vocabulary like `feature_tags`.
+  // Empty = no site set, treated as CO-LOCATED with every other Room —
+  // the honest default for a single-building tenant, which never pays for
+  // this field. Only `TravelTimeBetweenRooms` reads it.
+  string site = 11;
 }
 
 // One counted feature a Room supplies. See `Room.feature_quantities`.
@@ -310,6 +357,13 @@ message Offering {
   // `DistributedPatternAdherence` / `BlockPatternAdherence` in
   // constraints.proto.
   SchedulingPattern scheduling_pattern = 17;
+
+  // Prefer this Offering's Sessions land on FEWER distinct days across the
+  // term (fuller days) rather than one per day — independent of
+  // `scheduling_pattern`, which is about WHEN in the term, not how densely
+  // packed each day is. The two combine: BLOCK + this means a short, dense
+  // run of full days. See `MinimizeOfferingDistinctDays`.
+  bool prefer_fuller_days = 18;
 }
 
 // See `Offering.room_feature_requirements`.

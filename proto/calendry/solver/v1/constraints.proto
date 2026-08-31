@@ -110,6 +110,14 @@ message ConstraintConfig {
     MaxOfferingSessionsPerDay    max_offering_sessions_per_day    = 48;
     MaxConsecutiveOfferingBlocks max_consecutive_offering_blocks  = 49;
     MinimizeOfferingDaySplit     minimize_offering_day_split      = 50;
+
+    // -- P0 batch: break-aware, per-Offering teaching mode, travel, day caps --
+    MinimizeBreakSpanning        minimize_break_spanning         = 51;
+    MinimizeOfferingDistinctDays minimize_offering_distinct_days = 52;
+    TravelTimeBetweenRooms       travel_time_between_rooms       = 53;
+    MaxDays                      max_days                        = 54;
+    MaxConsecutiveDays           max_consecutive_days            = 55;
+    Daybreak                     daybreak                        = 56;
   }
 }
 
@@ -536,6 +544,77 @@ message MaxConcurrentOnlineSessions {
 message GroupSizeFitsRoom {}
 
 // ---------------------------------------------------------------------------
+// P0 batch: break-aware, per-Offering teaching mode, travel, day caps
+// ---------------------------------------------------------------------------
+
+// SOFT. Discourages a Session from spanning a `TimeGrid` break — starting
+// before a gap and resuming after it, unless the alternative costs more.
+// No parameters: cost depends only on the placement's own start block and
+// duration against `TimeGrid.default_gap_minutes`/`breaks`, already on the
+// wire.
+//
+// Reverses the app's "a Session whose duration spans a break" decision,
+// which held such placements legal and NOT sent to the solver — recorded
+// there, not here, because the reversal is app-side documentation, this
+// type existing is the reversal.
+message MinimizeBreakSpanning {}
+
+// SOFT. Prices the number of DISTINCT DAYS one Offering's Sessions land on
+// across the whole term, for Offerings with `Offering.prefer_fuller_days`
+// set. Independent of `scheduling_pattern` (WHEN in the term) and of the
+// (Offering, day) cluster above (WITHIN one day) — combines with
+// `BlockPatternAdherence`: BLOCK + this means a short, dense run of full
+// days. No parameters: which Offerings are counted is entirely
+// `Offering.prefer_fuller_days`.
+message MinimizeOfferingDistinctDays {}
+
+// SOFT. Requires a minimum gap when consecutive same-day Sessions for the
+// same Person or Group are in Rooms whose `Room.site` differs — modeling
+// travel between buildings/campuses. Priced against the ACTUAL gap between
+// the two blocks (`TimeGrid.default_gap_minutes`/`breaks`), not block
+// adjacency alone; two Rooms with no site set are treated as co-located.
+// Only same-day, adjacent-block pairs are considered — not the full
+// pairwise cross-product `Ordering between Offerings` would need.
+message TravelTimeBetweenRooms {
+  repeated CompactnessScope scope = 1; // empty = both axes independently
+
+  uint32 min_minutes_between_sites = 2;
+}
+
+// HARD, priced at `hard_penalty` rather than a construction filter — the
+// same ADR-0025 stance `MaxOnlineShare` takes, since Calendry's warn-and-allow
+// design must not let a hard day cap dead-end construction. Caps the number
+// of DISTINCT days one Group's or Person's Sessions may use, per week.
+message MaxDays {
+  repeated CompactnessScope scope = 1;
+
+  uint32 max_days = 2;
+}
+
+// HARD, same pricing stance as `MaxDays`. Caps the longest run of
+// CONSECUTIVE active days (per `TimeGrid.active_days`) one Group or Person
+// may be scheduled on, per week.
+message MaxConsecutiveDays {
+  repeated CompactnessScope scope = 1;
+
+  uint32 max_consecutive_days = 2;
+}
+
+// SOFT. Requires minimum WALL-CLOCK rest between one day's last active
+// block and the next TEACHING day's first active block (consecutive per
+// `TimeGrid.active_days`, NOT calendar-adjacent — a Friday-to-Monday gap
+// trivially satisfies any reasonable rest period), for the same Group or
+// Person. Resolves through `TimeGrid.day_start_minute`/
+// `block_length_minutes`/`default_gap_minutes`/`breaks` for the real
+// end/start minute, not a block count — the same reasoning
+// `TravelTimeBetweenRooms` prices the actual gap rather than adjacency.
+message Daybreak {
+  repeated CompactnessScope scope = 1;
+
+  uint32 min_rest_minutes = 2;
+}
+
+// ---------------------------------------------------------------------------
 // Offering relations
 //
 // A whole family of requested rules — Precedence, DifferentTime, SameTime/
@@ -572,6 +651,10 @@ message OfferingRelation {
 
   oneof params {
     DifferentTime different_time = 10;
+    SameTime      same_time      = 11;
+    SameDays      same_days      = 12;
+    SameStart     same_start     = 13;
+    MeetTogether  meet_together  = 14;
   }
 }
 
@@ -581,3 +664,60 @@ message OfferingRelation {
 // No parameters: which Offerings are related is entirely the enclosing
 // `OfferingRelation.offering_ids`.
 message DifferentTime {}
+
+// ---------------------------------------------------------------------------
+// SameTime / SameDays / SameStart — force members to run in PARALLEL rather
+// than apart. The opposite of `DifferentTime`, and not interchangeable with
+// each other: each binds a different axis, and a tenant wants them
+// separately (parallel streams in the same hour vs. classes that must
+// merely share their day pattern).
+//
+// PER-WEEK, BEST-EFFORT: none of the three requires the related Offerings
+// to share `required_session_count`. For each week where two or more
+// members have a placed Session, THOSE Sessions must agree on the bound
+// axis; a week where only one member (or none) has a Session imposes no
+// constraint that week. This sidesteps the "one meets twice a week, the
+// other three times" ill-definedness the relation would otherwise inherit
+// from `ExactFrequency` mismatches, at the cost of never flagging a week
+// that is one-sided by construction rather than by mismatch — accepted
+// because Calendry Sessions are placed per-week independently, with no
+// fixed weekly "meeting pattern" object UniTime's own class-level relations
+// assume.
+//
+// All HARD, matching `DifferentTime`'s precedent for this mechanism — the
+// search cannot violate any of the three. No parameters: which Offerings
+// are related, and which weeks their Sessions land in, are read entirely
+// off the enclosing `OfferingRelation.offering_ids` and each Session's own
+// `SlotRef`.
+// ---------------------------------------------------------------------------
+
+// HARD. Members' same-week Sessions must occupy the same block — same time
+// of day, days may differ.
+message SameTime {}
+
+// HARD. Members' same-week Sessions must occupy the same day — the weekday
+// set matches, blocks may differ.
+message SameDays {}
+
+// HARD. Members' same-week Sessions must START at the same block — the
+// strict combination of `SameTime` and `SameDays` collapsed into one direct
+// check, kept as its own type (rather than requiring a tenant to enable
+// both) because UniTime's `Same Start Time` is requested independently.
+message SameStart {}
+
+// HARD. The full UniTime "Meet Together" package: every member of the
+// enclosing relation shares ONE Room, at one same-week SameTime+SameDays
+// slot, simultaneously — cross-listed courses, a combined lecture for two
+// programmes, a joint seminar. Composes SameTime+SameDays semantics with
+// CONDITIONAL room sharing rather than duplicating them: the room axis
+// treats members of a `MeetTogether` relation as one combined occupant for
+// that Room at that slot, summing `Offering.min_capacity` across them,
+// instead of each excluding the other the way `RoomDoubleBooking` normally
+// would. Every other pair of Offerings is still refused the room — this
+// relaxes exclusivity for exactly the declared members, not the Room.
+//
+// `CanShareRoom` (UniTime's weaker variant: room-sharing only, no time
+// constraint) is deliberately not built here — nothing has requested it
+// independently of the full package, and it would need its own answer to
+// what "sharing" means without SameTime/SameDays binding the pair together.
+message MeetTogether {}
