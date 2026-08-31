@@ -1,5 +1,5 @@
 {
-  "name": "@mindcollaps/calendry-proto",
+  "name": "@calendry-de/calendry-proto",
   "version": "0.0.0-dev",
   "description": "TypeScript bindings for the Calendry solver gRPC contract — SolverInput/SolverOutput, the constraint catalogue, and the StartRun/GetStatus/CancelRun service.",
   "keywords": [
@@ -10,15 +10,15 @@
     "scheduling"
   ],
   "license": "UNLICENSED",
-  "author": "MindCollaps",
-  "homepage": "https://github.com/MindCollaps/calendry-proto#readme",
+  "author": "Calendry-de",
+  "homepage": "https://github.com/Calendry-de/calendry-proto#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MindCollaps/calendry-proto.git",
+    "url": "git+https://github.com/Calendry-de/calendry-proto.git",
     "directory": "packages/ts"
   },
   "bugs": {
-    "url": "https://github.com/MindCollaps/calendry-proto/issues"
+    "url": "https://github.com/Calendry-de/calendry-proto/issues"
   },
   "type": "module",
   "sideEffects": false,

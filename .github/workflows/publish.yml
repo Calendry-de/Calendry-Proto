@@ -82,7 +82,7 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@mindcollaps'
+          scope: '@calendry-de'
 
       - name: Install protoc
         run: |

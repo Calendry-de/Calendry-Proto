@@ -18,7 +18,7 @@ permissions:
 
 env:
   BUF_VERSION: 1.58.0
-  REPO_URL: https://github.com/MindCollaps/calendry-proto.git
+  REPO_URL: https://github.com/Calendry-de/calendry-proto.git
 
 jobs:
   validate:
