@@ -605,6 +605,27 @@ message SolverOutput {
   // from "converged, 38 short" until a reviewer noticed missing Sessions
   // downstream.
   repeated UnplacedOffering unplaced_offerings = 6;
+
+  // Session ids this run RECEIVED and kept as immovable occupancy — locked,
+  // already past the reference instant, or out of scope under
+  // LOCK_POLICY_HARD — rather than re-placing them. They are deliberately
+  // NOT echoed in `sessions` (re-reporting the caller's own data would
+  // double-count on apply), but their absence there is not orphanhood: an
+  // applier must treat a Session as gone only when it appears in neither
+  // `sessions` nor here.
+  //
+  // Exists because of a destructive misread (calendry investigation
+  // 2026-09-01, "the vanishing eleven"): a Session before `reference_slot`
+  // classifies as past, satisfies its Offering's demand as fixed occupancy,
+  // and so appeared in NEITHER `sessions` NOR `unplaced_offerings` — and the
+  // applier deleted real taught history as `not_returned_by_solver`. Locked
+  // Sessions never had this problem only because the caller can recognize
+  // its own `is_locked` data; past-ness is computed solver-side and was
+  // invisible.
+  //
+  // Another tenant's Federation occupancy is never listed — it is not a
+  // Session of this snapshot's tenant.
+  repeated string retained_session_ids = 7;
 }
 
 // See `SolverOutput.unplaced_offerings`.
