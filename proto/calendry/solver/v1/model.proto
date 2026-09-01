@@ -589,6 +589,43 @@ message SolverOutput {
   // N candidates turned out to need no wire change at all (N ordinary seeded
   // runs), so this field is expected to be dropped rather than committed.
   repeated SolverCandidate candidates = 5;
+
+  // Offerings whose `required_session_count` this solution did not fully
+  // realize. Absent means every in-scope Offering got everything it asked
+  // for; an Offering with no outstanding placements to begin with (fully
+  // covered by locked/immovable Sessions) never appears here at all.
+  //
+  // THE ONLY WIRE-LEVEL SIGNAL FOR "COULD NOT PLACE". `hard_violations`
+  // fires for a placement that EXISTS and breaks a rule — it says nothing
+  // about a placement that never got created, so a run that silently drops
+  // Sessions can report zero hard violations and look identical to a fully
+  // placed one. See calendry issue #119: a run swung between 170 and 208
+  // placements on an unchanged 208-Session instance, `hard_violations: 0`
+  // every time, with no way for a caller to tell "converged, complete" apart
+  // from "converged, 38 short" until a reviewer noticed missing Sessions
+  // downstream.
+  repeated UnplacedOffering unplaced_offerings = 6;
+}
+
+// See `SolverOutput.unplaced_offerings`.
+message UnplacedOffering {
+  // Matches `PlacedSession.offering_id` — the wire id as sent, including a
+  // multi-Group Offering's synthetic `offering::group` split id, so a caller
+  // can attribute a shortfall to the same series its placements are grouped
+  // under.
+  string offering_id = 1;
+
+  // Placement variables this run created for this Offering — its
+  // `required_session_count` minus whatever locked/immovable Sessions
+  // already realized, NOT the raw `required_session_count` itself. An
+  // Offering fully covered by locked Sessions has nothing outstanding and
+  // is correctly absent from this list rather than reported as a false
+  // shortfall.
+  uint32 requested = 2;
+
+  // Of `requested`, how many this solution actually placed. Always less
+  // than `requested` — an entry only exists here because of the shortfall.
+  uint32 placed = 3;
 }
 
 // One alternative full result. See `SolverOutput.candidates`.
