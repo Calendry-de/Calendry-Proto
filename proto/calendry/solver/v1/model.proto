@@ -228,6 +228,33 @@ message Room {
   // constraint is configured, and even then only for Offerings that do NOT
   // require any of this Room's `feature_tags`.
   bool is_specialized = 12;
+
+  // Physical FOOTPRINTS this Room occupies — tenant-defined open vocabulary,
+  // like `feature_tags`. Booking this Room for a slot makes every OTHER Room
+  // sharing any of these tags unbookable for that slot, and vice versa.
+  //
+  // This is the movable-wall case, and nothing else in the model can say it:
+  // rooms 1.0, 1.1 and 1.2 behind folding partitions are three bookable Rooms
+  // when the walls are closed and one Audimax when they are open. All four
+  // Room rows carry the same footprint tag, so booking any one of them
+  // occupies the space all four describe.
+  //
+  // NOT `no_double_booking_room`, which is one Room against ITSELF across
+  // time — exclusivity read from `is_virtual` and checked per Room. This is a
+  // relationship BETWEEN Rooms, and it is structural and HARD for the same
+  // reason: two Sessions in one physical space at one time is not a
+  // preference to weigh.
+  //
+  // Symmetric by construction — membership is a shared tag, not a directed
+  // reference, so "A blocks B" and "B blocks A" cannot drift apart. A Room may
+  // carry SEVERAL tags, which is how a wall shared between two different
+  // combination options is expressed. A tag only one Room carries is
+  // naturally inert.
+  //
+  // Only meaningful on an EXCLUSIVE Room: a virtual Room has no physical
+  // footprint to share, and one carrying a tag here is refused at conversion
+  // rather than silently ignored.
+  repeated string footprint_tags = 13;
 }
 
 // One counted feature a Room supplies. See `Room.feature_quantities`.
@@ -284,6 +311,14 @@ message Preference {
 
 // A blackout window. Empty repeated field = "all values on that axis", so
 // {days:[5]} means every Friday and {blocks:[0]} means every first block.
+//
+// The three axes are a CROSS PRODUCT: one row is days x blocks x weeks, and
+// they intersect rather than union. `{days:[3,4,5], weeks:[5]}` is therefore
+// Wednesday, Thursday and Friday OF WEEK 5 and of no other week — a mid-week
+// absence is exactly expressible, in one row. This field is `repeated`, so an
+// absence crossing a week boundary is two rows (Wed-Fri of week 5, Mon-Tue of
+// week 6), and any set of cells at all is some union of these products. There
+// is no date-precise axis because none is needed. See Calendry #118.
 message Unavailability {
   repeated uint32 days   = 1;  // ISO weekday
   repeated uint32 blocks = 2;  // 0-based within day
