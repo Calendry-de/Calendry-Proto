@@ -144,6 +144,28 @@ message Week {
   string start_date = 2;
 
   WeekKind kind = 3;
+
+  // Which Groups this week is an EXAM week FOR. Empty — the default, and what
+  // every peer on an earlier schema sends — means every Group: a term-global
+  // exam period, exactly as before this field existed.
+  //
+  // A NARROWING of `kind`, never a second place to declare one. The week list
+  // stays the single coordinate system every constraint resolves against, and
+  // `WeekKind` stays a property of a SLOT rather than of a (slot, Group) pair,
+  // so conflict detection stays a table lookup. What this scopes is the
+  // AUDIENCE: a third conjunctive axis beside the week and its kind, the shape
+  // `Unavailability` already has.
+  //
+  // An id may name a Group at any level and binds that Group's DESCENDANTS: a
+  // programme's exam fortnight covers its cohorts. From the query side, a
+  // Session attached to `g` sits in an exam week when `{g} ∪ ancestors(g)`
+  // names one — `Group.blackouts`' direction, one axis over.
+  //
+  // Only meaningful when `kind` is WEEK_KIND_EXAM. A non-empty list on any
+  // other kind is REFUSED rather than ignored: ignoring it would widen the
+  // ordinary-teaching window back over the exams the scope was sent to
+  // protect, and the run would report nothing wrong.
+  repeated string exam_group_ids = 4;
 }
 
 // Enum values carry the enum-name prefix because protobuf scopes them to the

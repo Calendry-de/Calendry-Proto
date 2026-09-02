@@ -268,13 +268,26 @@ message MinimizeRoomRank {
 // SOFT. Penalize Sessions falling in a week whose `WeekKind` is EXAM.
 // Resolves against the structured Academic Calendar — the prototype's
 // `weeks[-exam_weeks:]` slicing must not be reproduced.
+//
+// SCOPED BY AUDIENCE, not only by kind: which weeks count as "the exam
+// period" is read per Offering, through `Week.exam_group_ids` and the
+// attending Groups' ancestry. Two cohorts sitting exams in different weeks
+// are two different answers to the same rule, and `applies_to_kinds` cannot
+// separate them because both cohorts' exams are the same Session kind.
 message MinimizeExamWeek {
   // false (default) — penalize placing an ordinary Session in an EXAM week.
   // true            — invert: penalize NOT placing in an EXAM week, pushing
   // an exam-kind Session toward the exam period instead of away from it. Same
   // one-flag-not-two-types reasoning as `MinimizeRoomRank.invert`.
   //
-  // PROTO ONLY. The solver does not yet read this field.
+  // The two directions are not mutually exclusive: a tenant may instantiate
+  // both, and a placement then pays exactly one of them.
+  //
+  // Note for `true` together with `Week.exam_group_ids`: an Offering whose
+  // cohorts have NO exam period of their own is charged at every slot, which
+  // is a constant that steers nothing rather than an exemption. That is the
+  // same thing this flag already did over a calendar with no exam weeks at
+  // all.
   bool invert = 1;
 }
 
