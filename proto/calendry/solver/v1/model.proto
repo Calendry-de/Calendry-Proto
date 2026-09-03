@@ -304,6 +304,30 @@ message Person {
   // meaning, which is why these are separate messages rather than one reused
   // type.
   Preference preferred = 5;
+
+  // HARD. Rooms this Person may teach in. Empty — the default — means any
+  // Room the Offering itself allows, which is every Person before this field
+  // existed.
+  //
+  // "The workshop lead always teaches in the workshop." A RESTRICTION, never
+  // a preference: there is no soft reading of this field, and the soft
+  // reading already exists one field up as `Preference.preferred_room_features`.
+  //
+  // Enforced for Sessions this Person LEADS, never ones they merely attend —
+  // the same scope `blackouts` and `preferred` have, and for the same reason.
+  // A Person who only ever attends is inert here.
+  //
+  // Intersects with `Offering.allowed_room_ids` and every other room filter,
+  // and EVERY Room of a multi-room Session must satisfy it: "at least one"
+  // would let a hard pin be escaped by requiring more Rooms. An empty
+  // intersection makes the Session unplaceable and is reported as such —
+  // never silently widened, since an empty list here means "any Room".
+  //
+  // Enablement is `LecturerRoomPin` in constraints.proto, not this field:
+  // the values are Person data, but whether the rule applies at all — and to
+  // which Session kinds — is tenant policy, exactly the `blackouts` +
+  // `LecturerVeto` split.
+  repeated string allowed_room_ids = 6;
 }
 
 // A soft preference: days and blocks this person would RATHER have, weighted
@@ -326,8 +350,17 @@ message Preference {
   // `Room.feature_tags`' vocabulary by KEY, matching `Offering.
   // required_room_features`.
   //
-  // PROTO ONLY — no evaluator reads this yet. `PersonPreferenceFit` counts
-  // `days`/`blocks` only.
+  // BUILT. A second, independent axis FAMILY beside days/blocks rather than a
+  // third axis folded into the same product, so a Person who states only a
+  // room preference is not treated as having stated everything. Priced on
+  // both paths — the precomputed per-placement table and, for an Offering
+  // with a genuine lecturer pool, the live per-person one — and charged as
+  // the UNMET fraction like every other preference axis.
+  //
+  // Superseded comment, kept as a warning: this said "PROTO ONLY — no
+  // evaluator reads this yet" for several releases after it was built, which
+  // made a soft person-to-room rule look like an open design option rather
+  // than a duplicate of one that already shipped.
   repeated string preferred_room_features = 4;
 }
 

@@ -120,6 +120,8 @@ message ConstraintConfig {
     Daybreak                     daybreak                        = 56;
 
     MinimizeSpecializedRoomUse   minimize_specialized_room_use   = 57;
+
+    LecturerRoomPin              lecturer_room_pin               = 58;
   }
 }
 
@@ -382,6 +384,34 @@ message MinimizeCapacityWaste {
 // `MinimizeRoomRank`'s distance past its threshold. A Session occupying
 // several specialized Rooms at once still costs its weight once.
 message MinimizeSpecializedRoomUse {}
+
+// HARD, filterable. Enables `Person.allowed_room_ids`: a lecturer pinned to a
+// Room may only lead Sessions placed there. "The workshop lead always teaches
+// in the workshop."
+//
+// Empty message: no params beyond id/kinds. WHICH Rooms each Person may use
+// is `Person.allowed_room_ids`, entity data — the same split `LecturerVeto`
+// makes for `Person.blackouts`, and for the same reason: the values belong to
+// the Person, but whether the rule is enforced at all, and for which Session
+// kinds, is tenant policy. A Person with an empty list is unaffected either
+// way, so enabling this costs nothing for the tenants that pin nobody.
+//
+// Scoped to Sessions the Person LEADS, never ones they attend — solver
+// ADR-0026's scope decision, unchanged.
+//
+// A FILTER rather than a price, unlike `MinimizeSpecializedRoomUse` above.
+// The two are opposite halves of one distinction worth stating: a specialized
+// Room stays eligible and is merely discouraged, because the alternative is a
+// Session with nowhere to go; a pinned Room is the ONLY answer, because
+// "always teaches in the workshop" has no degraded reading that is still
+// true. The soft reading of this axis already exists as
+// `Preference.preferred_room_features`.
+//
+// EVERY Room of a multi-room Session must satisfy the pin — "at least one"
+// would let the restriction be escaped by requiring more Rooms — and the pin
+// does NOT expand through `Room.footprint_tags`: a footprint expands a
+// BLOCKING question, and a permission never expands.
+message LecturerRoomPin {}
 
 // SOFT. Penalize a Group's or Person's day touching more than
 // `max_locations_per_day` distinct, non-empty `Room.location` values —
