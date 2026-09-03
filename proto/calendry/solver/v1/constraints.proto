@@ -700,8 +700,14 @@ message Daybreak {
 // between relation types. See solver ADR-0028 for the full reasoning,
 // including why this is a NEW top-level message rather than another
 // `ConstraintConfig.params` variant, and why `offering_ids` is ordered even
-// though only a few future relation types (Precedence, Next Day, Two Days
-// After) ever read that order.
+// though only `Precedence` reads that order today.
+//
+// The day-counted "N days between" family is NOT a set of relation types: it
+// is `Precedence.min_days_between`, the floor to `max_days_between`'s
+// ceiling. A per-OCCURRENCE pairing — UniTime's reading, where lab i follows
+// lecture i — would be a new type rather than a parameter, because its
+// pairing differs from `Precedence`'s term-wide all-pairs one; nothing has
+// requested it.
 // ---------------------------------------------------------------------------
 
 message OfferingRelation {
@@ -790,9 +796,13 @@ message SameStart {}
 // relaxes exclusivity for exactly the declared members, not the Room.
 //
 // `CanShareRoom` (UniTime's weaker variant: room-sharing only, no time
-// constraint) is deliberately not built here — nothing has requested it
-// independently of the full package, and it would need its own answer to
-// what "sharing" means without SameTime/SameDays binding the pair together.
+// constraint) is deliberately NOT a relation type, and solver ADR-0035
+// records why. Its honest reading is a PERMISSION to co-occupy, which is a
+// hole in `RoomDoubleBooking` rather than a rule of its own — and sameness is
+// an equivalence while permission is only symmetric, so it cannot ride
+// `MeetTogether`'s anchor without becoming transitive. Capacity relief
+// without a time binding is a property of the ROOM, which is where the
+// missing field belongs.
 message MeetTogether {}
 
 // ---------------------------------------------------------------------------
@@ -846,4 +856,37 @@ message Precedence {
   // the student's calendar, and counting teaching days would silently
   // stretch that across every weekend and closure week.
   uint32 max_days_between = 2;
+
+  // FLOOR on the same boundary, in the same CALENDAR days `max_days_between`
+  // is the ceiling of: the successor's first Session must start at least this
+  // many days after the day of the predecessor's last. 0 = no floor beyond
+  // the ordering itself, which is every relation configured before this field
+  // existed.
+  //
+  // This is the "N days between" family, and it is a SCALAR rather than
+  // `NextDay`/`TwoDaysAfter` relation types for the reason solver ADR-0024
+  // gives: those would be two hardcoded values of one parameter, on an axis
+  // whose other bound is already a parameter, separately instantiable over
+  // the same member set. Set 1 for "not before the next day", 2 for "at
+  // least two days after".
+  //
+  // NOT expressible as `min_gap_minutes`, which is precisely why this field
+  // exists: that field is WALL-CLOCK, so using it as a day floor also
+  // constrains time-of-day. A value separating "same day" from "next day"
+  // exists only inside a window derived from `TimeGrid.day_start_minute`,
+  // the block lengths, the breaks and the block count — so it moves when the
+  // grid changes — and on a teaching day spanning 12 hours or more no such
+  // value exists at all.
+  //
+  // `min_days_between == max_days_between` means EXACTLY this many days, and
+  // that is a sharp edge in calendar days: a Friday predecessor then demands
+  // a Saturday successor, and this type is term-wide and hard-priced, so one
+  // Friday Session breaches the relation for the whole run. "The next
+  // TEACHING day" is a different unit than this type measures in
+  // (`Daybreak`'s), and is deliberately not offered here.
+  //
+  // A `min_days_between` above `max_days_between` is over-constrained input:
+  // tolerated and reported, like a `min_gap_minutes` that no
+  // `max_days_between` leaves room for, never refused.
+  uint32 min_days_between = 3;
 }
